@@ -411,3 +411,59 @@ class TestDataOperations:
         ])
         tables = engine.get_tables("main")
         assert "temp" not in tables
+
+
+class TestTimeTravelQueries:
+    """Test time-travel query functions: query_as_of_commit and query_as_of_timestamp."""
+
+    def test_query_as_of_commit(self, engine):
+        """Querying AS OF COMMIT <hash> should return the exact state at that commit."""
+        c1 = engine.commit("main", "Insert v1", "author", changes=[
+            {"action": "insert", "table_name": "users", "row_id": "u1", "data": {"name": "Alice", "role": "user"}},
+        ])
+        c2 = engine.commit("main", "Update v2", "author", changes=[
+            {"action": "update", "table_name": "users", "row_id": "u1", "data": {"name": "Alice", "role": "admin"}},
+        ])
+
+        # Query AS OF c1 hash
+        v1_data = engine.query_as_of_commit("users", c1["hash"])
+        assert len(v1_data) == 1
+        assert v1_data[0]["role"] == "user"
+
+        # Query AS OF c2 hash
+        v2_data = engine.query_as_of_commit("users", c2["hash"])
+        assert len(v2_data) == 1
+        assert v2_data[0]["role"] == "admin"
+
+    def test_query_as_of_commit_nonexistent_raises(self, engine):
+        """Querying AS OF a nonexistent commit hash should raise ValueError."""
+        with pytest.raises(ValueError, match="does not exist"):
+            engine.query_as_of_commit("users", "invalidhash123")
+
+    def test_query_as_of_timestamp(self, engine):
+        """Querying AS OF <timestamp> should resolve to the latest commit <= timestamp."""
+        import time
+        t0 = time.time()
+        c1 = engine.commit("main", "Commit 1", "author", changes=[
+            {"action": "insert", "table_name": "stock", "row_id": "s1", "data": {"qty": 10}},
+        ])
+        t1 = c1["timestamp"]
+        time.sleep(0.01)
+
+        c2 = engine.commit("main", "Commit 2", "author", changes=[
+            {"action": "update", "table_name": "stock", "row_id": "s1", "data": {"qty": 50}},
+        ])
+        t2 = c2["timestamp"]
+
+        # Query at t1 should give qty=10
+        data_at_t1 = engine.query_as_of_timestamp("stock", t1)
+        assert data_at_t1[0]["qty"] == 10
+
+        # Query at t2 should give qty=50
+        data_at_t2 = engine.query_as_of_timestamp("stock", t2)
+        assert data_at_t2[0]["qty"] == 50
+
+    def test_query_as_of_timestamp_before_all_commits_raises(self, engine):
+        """Querying AS OF a timestamp before any commit should raise ValueError."""
+        with pytest.raises(ValueError, match="No commits exist"):
+            engine.query_as_of_timestamp("users", 1.0)

@@ -431,6 +431,84 @@ class VersionEngine:
         return sorted(tables)
 
     # ──────────────────────────────────────────────
+    # Time-Travel Queries (AS OF COMMIT / AS OF timestamp)
+    # ──────────────────────────────────────────────
+
+    def query_as_of_commit(
+        self, table_name: str, commit_hash: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Query a table 'AS OF COMMIT <hash>'.
+
+        Resolves the exact data state of the database at a target historical commit.
+
+        Args:
+            table_name: Table to query.
+            commit_hash: The historical commit hash to query 'as of'.
+
+        Returns:
+            List of row dicts as they existed at that commit.
+
+        Raises:
+            ValueError: If commit_hash does not exist.
+        """
+        commit = self.conn.execute(
+            "SELECT id FROM commits WHERE hash = ?", (commit_hash,)
+        ).fetchone()
+        if commit is None:
+            raise ValueError(f"Commit '{commit_hash}' does not exist")
+
+        data_at_commit = self._resolve_data_at_commit(commit["id"])
+
+        results = []
+        for (tbl, row_id), version_data in data_at_commit.items():
+            if tbl == table_name and not version_data["is_deleted"]:
+                row = {"row_id": row_id}
+                if version_data["data_json"]:
+                    row.update(json.loads(version_data["data_json"]))
+                results.append(row)
+
+        return results
+
+    def query_as_of_timestamp(
+        self, table_name: str, timestamp: float
+    ) -> List[Dict[str, Any]]:
+        """
+        Query a table 'AS OF <timestamp>'.
+
+        Finds the latest commit that occurred at or before the given timestamp
+        and resolves the table state as of that commit.
+
+        Args:
+            table_name: Table to query.
+            timestamp: Historical unix timestamp to query 'as of'.
+
+        Returns:
+            List of row dicts as they existed at that timestamp.
+
+        Raises:
+            ValueError: If no commits exist at or before the given timestamp.
+        """
+        commit = self.conn.execute(
+            "SELECT id FROM commits WHERE timestamp <= ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (timestamp,),
+        ).fetchone()
+        if commit is None:
+            raise ValueError(f"No commits exist at or before timestamp {timestamp}")
+
+        data_at_commit = self._resolve_data_at_commit(commit["id"])
+
+        results = []
+        for (tbl, row_id), version_data in data_at_commit.items():
+            if tbl == table_name and not version_data["is_deleted"]:
+                row = {"row_id": row_id}
+                if version_data["data_json"]:
+                    row.update(json.loads(version_data["data_json"]))
+                results.append(row)
+
+        return results
+
+    # ──────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────
 
