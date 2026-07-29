@@ -52,14 +52,16 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
         );
 
         CREATE TABLE IF NOT EXISTS commits (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            hash        TEXT    NOT NULL UNIQUE,
-            parent_id   INTEGER,
-            branch_id   INTEGER NOT NULL,
-            message     TEXT    NOT NULL,
-            timestamp   REAL    NOT NULL,
-            author      TEXT    NOT NULL,
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            hash              TEXT    NOT NULL UNIQUE,
+            parent_id         INTEGER,
+            second_parent_id  INTEGER,
+            branch_id         INTEGER NOT NULL,
+            message           TEXT    NOT NULL,
+            timestamp         REAL    NOT NULL,
+            author            TEXT    NOT NULL,
             FOREIGN KEY (parent_id) REFERENCES commits(id),
+            FOREIGN KEY (second_parent_id) REFERENCES commits(id),
             FOREIGN KEY (branch_id) REFERENCES branches(id)
         );
 

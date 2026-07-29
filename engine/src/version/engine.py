@@ -133,6 +133,7 @@ class VersionEngine:
         message: str,
         author: str,
         changes: Optional[List[Dict[str, Any]]] = None,
+        second_parent_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create a new commit on the specified branch.
@@ -151,6 +152,7 @@ class VersionEngine:
             message: Commit message.
             author: Author identifier.
             changes: Optional list of row mutations to include in this commit.
+            second_parent_id: Optional second parent commit ID (for 3-way merge commits).
 
         Returns:
             Dict with the new commit's id, hash, message, timestamp.
@@ -168,14 +170,14 @@ class VersionEngine:
         now = time.time()
         parent_id = branch["head_commit_id"]
         commit_hash = _compute_hash(
-            str(parent_id), str(branch["id"]), message, str(now), author
+            str(parent_id), str(second_parent_id), str(branch["id"]), message, str(now), author
         )
 
         # Create the commit record
         self.conn.execute(
-            """INSERT INTO commits (hash, parent_id, branch_id, message, timestamp, author)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (commit_hash, parent_id, branch["id"], message, now, author),
+            """INSERT INTO commits (hash, parent_id, second_parent_id, branch_id, message, timestamp, author)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (commit_hash, parent_id, second_parent_id, branch["id"], message, now, author),
         )
         commit_id = self.conn.execute(
             "SELECT id FROM commits WHERE hash = ?", (commit_hash,)
@@ -218,6 +220,7 @@ class VersionEngine:
             "id": commit_id,
             "hash": commit_hash,
             "parent_id": parent_id,
+            "second_parent_id": second_parent_id,
             "branch_id": branch["id"],
             "message": message,
             "timestamp": now,
@@ -248,7 +251,7 @@ class VersionEngine:
 
         while current_id is not None and len(history) < limit:
             commit = self.conn.execute(
-                "SELECT id, hash, parent_id, branch_id, message, timestamp, author FROM commits WHERE id = ?",
+                "SELECT id, hash, parent_id, second_parent_id, branch_id, message, timestamp, author FROM commits WHERE id = ?",
                 (current_id,),
             ).fetchone()
             if commit is None:
