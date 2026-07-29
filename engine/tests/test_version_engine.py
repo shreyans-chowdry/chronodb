@@ -15,10 +15,17 @@ import os
 import json
 import pytest
 
-# Add engine to path so we can import from engine.src.version
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Ensure parent directories are on sys.path for flexible execution contexts
+engine_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+src_dir = os.path.abspath(os.path.join(engine_dir, "src"))
+for p in (engine_dir, src_dir):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from src.version.engine import VersionEngine
+try:
+    from src.version.engine import VersionEngine
+except ImportError:
+    from version.engine import VersionEngine
 
 
 @pytest.fixture
