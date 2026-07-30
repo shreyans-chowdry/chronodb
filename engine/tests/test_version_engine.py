@@ -27,9 +27,9 @@ try:
     from engine.src.version.engine import VersionEngine
 except ImportError:
     try:
-        from src.version.engine import VersionEngine
+        from src.version.engine import VersionEngine  # type: ignore # pyright: ignore
     except ImportError:
-        from version.engine import VersionEngine
+        from version.engine import VersionEngine  # type: ignore # pyright: ignore
 
 
 @pytest.fixture
