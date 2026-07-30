@@ -1,0 +1,7 @@
+{
+  "extraPaths": [
+    ".",
+    "engine",
+    "engine/src"
+  ]
+}
