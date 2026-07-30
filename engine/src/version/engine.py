@@ -20,7 +20,7 @@ from ..storage.disk_manager import DiskManager
 from ..storage.buffer_pool import BufferPoolManager
 from ..wal.wal_manager import WALManager
 from ..index.btree import BTreeIndex
-from ..storage.page import INVALID_PAGE_ID
+from ..storage.page import INVALID_PAGE_ID, PAGE_SIZE
 from .schema import _compute_hash
 from .catalog import SystemCatalog
 
