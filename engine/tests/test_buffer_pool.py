@@ -15,20 +15,27 @@ import tempfile
 import pytest
 
 # Path setup for flexible execution
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 engine_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 src_dir = os.path.abspath(os.path.join(engine_dir, "src"))
-for p in (engine_dir, src_dir):
+for p in (root_dir, engine_dir, src_dir):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 try:
-    from src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
-    from src.storage.disk_manager import DiskManager
-    from src.storage.buffer_pool import BufferPoolManager
+    from engine.src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
+    from engine.src.storage.disk_manager import DiskManager
+    
+    from engine.src.storage.buffer_pool import BufferPoolManager
 except ImportError:
-    from storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
-    from storage.disk_manager import DiskManager
-    from storage.buffer_pool import BufferPoolManager
+    try:
+        from src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
+        from src.storage.disk_manager import DiskManager
+        from src.storage.buffer_pool import BufferPoolManager
+    except ImportError:
+        from storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
+        from storage.disk_manager import DiskManager
+        from storage.buffer_pool import BufferPoolManager
 
 
 @pytest.fixture
