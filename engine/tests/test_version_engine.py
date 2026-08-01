@@ -16,16 +16,20 @@ import json
 import pytest
 
 # Ensure parent directories are on sys.path for flexible execution contexts
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 engine_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 src_dir = os.path.abspath(os.path.join(engine_dir, "src"))
-for p in (engine_dir, src_dir):
+for p in (root_dir, engine_dir, src_dir):
     if p not in sys.path:
         sys.path.insert(0, p)
 
 try:
-    from src.version.engine import VersionEngine
+    from engine.src.version.engine import VersionEngine
 except ImportError:
-    from version.engine import VersionEngine
+    try:
+        from src.version.engine import VersionEngine  # type: ignore # pyright: ignore
+    except ImportError:
+        from version.engine import VersionEngine  # type: ignore # pyright: ignore
 
 
 @pytest.fixture
