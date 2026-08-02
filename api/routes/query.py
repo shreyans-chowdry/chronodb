@@ -52,6 +52,7 @@ async def get_table_data(name: str, as_of: str = Query(..., description="Commit 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # ── New endpoints for the frontend dashboard ──
 
 @router.get("/tables")

@@ -23,19 +23,14 @@ for p in (root_dir, engine_dir, src_dir):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-try:
-    from engine.src.version.engine import VersionEngine
-except ImportError:
-    try:
-        from src.version.engine import VersionEngine  # type: ignore # pyright: ignore
-    except ImportError:
-        from version.engine import VersionEngine  # type: ignore # pyright: ignore
+from engine.src.version.engine import VersionEngine
 
 
 @pytest.fixture
-def engine():
-    """Create a fresh in-memory VersionEngine for each test."""
-    e = VersionEngine(":memory:")
+def engine(tmp_path):
+    """Create a fresh VersionEngine in a temp directory for each test."""
+    db_path = str(tmp_path / "test_chronodb.dat")
+    e = VersionEngine(db_path)
     yield e
     e.close()
 
@@ -74,10 +69,10 @@ class TestCommit:
              "data": {"name": "Alice", "balance": 100}},
         ])
 
-        # Count row_versions
-        count_before = engine.conn.execute(
-            "SELECT COUNT(*) as c FROM row_versions"
-        ).fetchone()["c"]
+        # Instead of SQLite row_versions, check the version chain length in the B+ Tree
+        leaf = engine.btree.find_leaf("accounts:acc-1")
+        count_before = len(leaf.entries["accounts:acc-1"])
+        engine.btree._unpin_node_clean(leaf.page_id)
 
         # Second commit: update the same row
         engine.commit("main", "Update Alice balance", "test-author", changes=[
@@ -85,20 +80,30 @@ class TestCommit:
              "data": {"name": "Alice", "balance": 200}},
         ])
 
-        count_after = engine.conn.execute(
-            "SELECT COUNT(*) as c FROM row_versions"
-        ).fetchone()["c"]
+        leaf = engine.btree.find_leaf("accounts:acc-1")
+        versions = leaf.entries["accounts:acc-1"]
+        engine.btree._unpin_node_clean(leaf.page_id)
+        
+        count_after = len(versions)
 
         # The update should have ADDED a new row_version, not replaced the old one
         assert count_after == count_before + 1
 
         # Both versions should exist in the database
-        versions = engine.conn.execute(
-            "SELECT data_json FROM row_versions WHERE table_name='accounts' AND row_id='acc-1' ORDER BY id"
-        ).fetchall()
         assert len(versions) == 2
-        assert json.loads(versions[0]["data_json"])["balance"] == 100  # original
-        assert json.loads(versions[1]["data_json"])["balance"] == 200  # updated
+        
+        # Read the page data from buffer pool
+        def get_data(page_version_id):
+            page = engine.pool.fetch_page(page_version_id)
+            null_idx = page.data.find(b'\x00')
+            if null_idx == -1:
+                null_idx = 4096
+            data = json.loads(page.data[:null_idx].decode('utf-8'))
+            engine.pool.unpin_page(page_version_id, is_dirty=False)
+            return data
+            
+        assert get_data(versions[0][1])["balance"] == 100  # original
+        assert get_data(versions[1][1])["balance"] == 200  # updated
 
     def test_commit_returns_correct_metadata(self, engine):
         """Commit should return a dict with id, hash, message, author."""
@@ -111,9 +116,7 @@ class TestCommit:
     def test_commit_advances_branch_head(self, engine):
         """After a commit, the branch HEAD should point to the new commit."""
         commit1 = engine.commit("main", "Commit 1", "author")
-        branch = engine.conn.execute(
-            "SELECT head_commit_id FROM branches WHERE name='main'"
-        ).fetchone()
+        branch = engine.catalog.get_branch("main")
         assert branch["head_commit_id"] == commit1["id"]
 
     def test_commit_on_nonexistent_branch_raises(self, engine):
@@ -138,19 +141,15 @@ class TestBranch:
              "data": {"name": "Bob", "balance": 200}},
         ])
 
-        row_versions_before = engine.conn.execute(
-            "SELECT COUNT(*) as c FROM row_versions"
-        ).fetchone()["c"]
+        num_pages_before = engine.disk.get_num_pages()
 
         # Create a branch
         engine.branch("feature-x", source_branch="main")
 
-        row_versions_after = engine.conn.execute(
-            "SELECT COUNT(*) as c FROM row_versions"
-        ).fetchone()["c"]
+        num_pages_after = engine.disk.get_num_pages()
 
         # No new row_versions should have been created
-        assert row_versions_after == row_versions_before
+        assert num_pages_after == num_pages_before
 
     def test_branch_points_to_source_head(self, engine):
         """New branch should point to the same HEAD commit as the source."""

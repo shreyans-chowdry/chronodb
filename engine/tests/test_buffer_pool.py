@@ -22,19 +22,9 @@ for p in (root_dir, engine_dir, src_dir):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-try:
-    from engine.src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
-    from engine.src.storage.disk_manager import DiskManager
-    from engine.src.storage.buffer_pool import BufferPoolManager
-except ImportError:
-    try:
-        from src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID  # type: ignore # pyright: ignore
-        from src.storage.disk_manager import DiskManager  # type: ignore # pyright: ignore
-        from src.storage.buffer_pool import BufferPoolManager  # type: ignore # pyright: ignore
-    except ImportError:
-        from storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID  # type: ignore # pyright: ignore
-        from storage.disk_manager import DiskManager  # type: ignore # pyright: ignore
-        from storage.buffer_pool import BufferPoolManager  # type: ignore # pyright: ignore
+from engine.src.storage.page import Page, PAGE_SIZE, INVALID_PAGE_ID
+from engine.src.storage.disk_manager import DiskManager
+from engine.src.storage.buffer_pool import BufferPoolManager
 
 
 @pytest.fixture

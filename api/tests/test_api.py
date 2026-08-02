@@ -86,6 +86,7 @@ def test_get_table_failure():
     assert response.status_code == 422
     assert "error" in response.json()
 
+
 # ── Tests for new dashboard endpoints ──
 
 def test_list_tables():
