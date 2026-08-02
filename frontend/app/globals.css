@@ -11,15 +11,26 @@
   --color-accent-glow: rgba(139, 92, 246, 0.15);
 }
 
+html:not(.dark) {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-accent: #7c3aed;
+  --color-accent-glow: rgba(124, 58, 237, 0.08);
+}
+
 /* ── Base ── */
 html {
-  color-scheme: dark;
+  color-scheme: dark light;
 }
 
 body {
   background: var(--color-bg);
   color: var(--color-text);
   font-feature-settings: "rlig" 1, "calt" 1;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* ── Subtle gradient background ── */
