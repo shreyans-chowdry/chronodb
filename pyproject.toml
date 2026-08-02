@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "ChronoDB Version Engine MVP"
 authors = [{ name = "ChronoDB Team" }]
 dependencies = [
-    "pytest>=7.0.0"
+    "pytest>=7.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.24.0"
 ]
 
 [tool.pytest.ini_options]
