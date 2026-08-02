@@ -37,4 +37,24 @@ chronodb/
 ```
 
 ## Getting Started
-Follow the documentation in `docs/` to set up and run ChronoDB locally.
+
+### Running Locally
+
+**Terminal 1 — API Server (Backend):**
+```bash
+cd api
+python -m uvicorn main:app --reload --port 8000
+```
+Or from root:
+```bash
+python -m uvicorn api.main:app --reload --port 8000
+```
+
+**Terminal 2 — Frontend Dev Server:**
+```bash
+cd frontend
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+

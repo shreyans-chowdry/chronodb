@@ -51,3 +51,28 @@ async def get_table_data(name: str, as_of: str = Query(..., description="Commit 
         raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── New endpoints for the frontend dashboard ──
+
+@router.get("/tables")
+async def list_tables(branch_name: str = Query("main", description="Branch to list tables for"), engine: VersionEngine = Depends(get_engine)):
+    """List all table names that have data on the given branch."""
+    try:
+        tables = engine.get_tables(branch_name=branch_name)
+        return {"tables": tables}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/data/{table_name}")
+async def get_data(table_name: str, branch_name: str = Query("main", description="Branch to read from"), engine: VersionEngine = Depends(get_engine)):
+    """Get current data for a table on the specified branch."""
+    try:
+        rows = engine.get_data(branch_name=branch_name, table_name=table_name)
+        return {"rows": rows}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

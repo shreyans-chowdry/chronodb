@@ -85,3 +85,54 @@ def test_get_table_failure():
     response = client.get("/tables/users")
     assert response.status_code == 422
     assert "error" in response.json()
+
+
+# ── Tests for new dashboard endpoints ──
+
+def test_list_tables():
+    """GET /tables should return a list of table names on the given branch."""
+    response = client.get("/tables", params={"branch_name": "main"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "tables" in data
+    assert isinstance(data["tables"], list)
+    # We inserted a row into 'users' in test_create_commit
+    assert "users" in data["tables"]
+
+def test_list_tables_default_branch():
+    """GET /tables without branch_name should default to main."""
+    response = client.get("/tables")
+    assert response.status_code == 200
+    assert "tables" in response.json()
+
+def test_list_tables_nonexistent_branch():
+    """GET /tables with non-existent branch should return 404."""
+    response = client.get("/tables", params={"branch_name": "no-such-branch"})
+    assert response.status_code == 404
+    assert "error" in response.json()
+
+def test_get_data():
+    """GET /data/{table} should return rows for the table on the branch."""
+    response = client.get("/data/users", params={"branch_name": "main"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "rows" in data
+    assert isinstance(data["rows"], list)
+    assert len(data["rows"]) >= 1
+    # Verify the data matches what we inserted
+    row = data["rows"][0]
+    assert row["name"] == "Alice"
+
+def test_get_data_empty_table():
+    """GET /data/{table} for a non-existent table should return empty rows."""
+    response = client.get("/data/nonexistent", params={"branch_name": "main"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "rows" in data
+    assert data["rows"] == []
+
+def test_get_data_nonexistent_branch():
+    """GET /data/{table} with non-existent branch should return 404."""
+    response = client.get("/data/users", params={"branch_name": "no-such-branch"})
+    assert response.status_code == 404
+    assert "error" in response.json()
