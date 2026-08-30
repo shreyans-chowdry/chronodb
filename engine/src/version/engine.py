@@ -342,14 +342,78 @@ class VersionEngine:
         return self._resolve_table_data(table_name, target_id)
 
     # ──────────────────────────────────────────────
-    # Three-Way Merge
+    # Diff & Three-Way Merge
     # ──────────────────────────────────────────────
+
+    def diff(self, commit_hash_a: str, commit_hash_b: str) -> Dict[str, Any]:
+        """Compare two commits and produce a per-table, per-row diff."""
+        id_a = self._resolve_commit_id(commit_hash_a)
+        id_b = self._resolve_commit_id(commit_hash_b)
+
+        all_keys: set[tuple[str, str]] = set()
+        for table_name, row_ids in self.catalog.tables.items():
+            for row_id in row_ids:
+                all_keys.add((table_name, row_id))
+
+        tables_diff: Dict[str, Dict[str, list]] = {}
+
+        for table_name, row_id in all_keys:
+            key = f"{table_name}:{row_id}"
+
+            page_a = self.btree.resolve_version(key, id_a, self.catalog.is_ancestor)
+            page_b = self.btree.resolve_version(key, id_b, self.catalog.is_ancestor)
+
+            data_a = read_row_data(self.pool, page_a) if page_a is not None and page_a != INVALID_PAGE_ID else None
+            data_b = read_row_data(self.pool, page_b) if page_b is not None and page_b != INVALID_PAGE_ID else None
+
+            exists_a = data_a is not None
+            exists_b = data_b is not None
+
+            if not exists_a and not exists_b:
+                continue
+
+            diff_row: Optional[Dict[str, Any]] = None
+
+            if exists_a and not exists_b:
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "deleted",
+                    "data_a": data_a,
+                    "data_b": None,
+                }
+            elif not exists_a and exists_b:
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "added",
+                    "data_a": None,
+                    "data_b": data_b,
+                }
+            elif data_a != data_b:
+                all_fields = set(list(data_a.keys()) + list(data_b.keys()))  # type: ignore
+                changed_fields = [
+                    f for f in all_fields if data_a.get(f) != data_b.get(f)  # type: ignore
+                ]
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "modified",
+                    "data_a": data_a,
+                    "data_b": data_b,
+                    "changed_fields": changed_fields,
+                }
+
+            if diff_row:
+                if table_name not in tables_diff:
+                    tables_diff[table_name] = {"rows": []}
+                tables_diff[table_name]["rows"].append(diff_row)
+
+        return {"tables": tables_diff}
 
     def merge(
         self,
         source_branch: str,
         target_branch: str,
         author: str,
+        resolutions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Three-way merge of source_branch into target_branch.
@@ -362,7 +426,7 @@ class VersionEngine:
           - On conflict: {"merged": False, "conflicting_rows": [...]}
         """
         merger = ThreeWayMerge(self.catalog, self.btree, self.pool)
-        result = merger.merge(source_branch, target_branch, author)
+        result = merger.merge(source_branch, target_branch, author, resolutions)
 
         if not result["merged"]:
             return result
@@ -408,6 +472,13 @@ class VersionEngine:
     # ──────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────
+
+    def _resolve_commit_id(self, commit_hash: str) -> int:
+        """Find commit ID from commit hash."""
+        for cid, cdata in self.catalog.commits.items():
+            if cdata["hash"] == commit_hash:
+                return cid
+        raise ValueError(f"Commit '{commit_hash}' does not exist")
 
     def _resolve_table_data(self, table_name: str, target_commit_id: int) -> List[Dict[str, Any]]:
         results = []

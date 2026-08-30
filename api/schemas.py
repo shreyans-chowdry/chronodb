@@ -25,11 +25,6 @@ class RollbackRequest(BaseModel):
     target_commit_hash: str = Field(..., description="Commit hash to rollback to")
     author: str = Field(..., description="Author of the rollback commit")
 
-class MergeRequest(BaseModel):
-    source_branch: str = Field(..., description="Branch to merge from")
-    target_branch: str = Field(..., description="Branch to merge into")
-    author: str = Field(..., description="Author of the merge commit")
-
 class ErrorDetail(BaseModel):
     code: str
     message: str
@@ -37,3 +32,14 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+class MergeResolution(BaseModel):
+    key: str = Field(..., description="Resolution key in format 'table_name:row_id'")
+    data: Optional[Dict[str, Any]] = Field(None, description="Resolved data (null = delete)")
+
+class MergeRequest(BaseModel):
+    target_branch: str = Field(..., description="Branch to merge INTO")
+    source_branch: str = Field(..., description="Branch to merge FROM")
+    author: str = Field(..., description="Author performing the merge")
+    resolutions: Optional[List[MergeResolution]] = Field(None, description="Conflict resolutions")
+
