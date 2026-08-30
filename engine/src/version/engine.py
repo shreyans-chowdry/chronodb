@@ -473,6 +473,13 @@ class VersionEngine:
     # Internal helpers
     # ──────────────────────────────────────────────
 
+    def _resolve_commit_id(self, commit_hash: str) -> int:
+        """Find commit ID from commit hash."""
+        for cid, cdata in self.catalog.commits.items():
+            if cdata["hash"] == commit_hash:
+                return cid
+        raise ValueError(f"Commit '{commit_hash}' does not exist")
+
     def _resolve_table_data(self, table_name: str, target_commit_id: int) -> List[Dict[str, Any]]:
         results = []
         row_ids = self.catalog.tables.get(table_name, [])
