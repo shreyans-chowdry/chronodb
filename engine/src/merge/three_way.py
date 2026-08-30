@@ -109,6 +109,7 @@ class ThreeWayMerge:
         source_branch: str,
         target_branch: str,
         author: str,
+        resolutions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Perform a three-way merge of source_branch into target_branch.
@@ -153,7 +154,7 @@ class ThreeWayMerge:
 
         # Detect conflicts and build merged changes
         conflicts, merged_changes = self._reconcile(
-            source_diffs, target_diffs, lca_id, source_head, target_head
+            source_diffs, target_diffs, lca_id, source_head, target_head, resolutions
         )
 
         if conflicts:
@@ -219,6 +220,7 @@ class ThreeWayMerge:
         lca_id: int,
         source_head: int,
         target_head: int,
+        resolutions: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Tuple[List[ConflictEntry], List[Dict[str, Any]]]:
         """
         Reconcile diffs from both branches.
@@ -235,6 +237,18 @@ class ThreeWayMerge:
 
         for key in all_keys:
             table_name, row_id = key
+            res_key = f"{table_name}:{row_id}"
+
+            # Apply manual resolution if provided
+            if resolutions and res_key in resolutions:
+                res_data = resolutions[res_key]
+                if res_data is None:
+                    merged_changes.append({"action": "delete", "table_name": table_name, "row_id": row_id, "data": None})
+                else:
+                    # 'insert' or 'update' doesn't matter much for engine.commit(), it handles both similarly
+                    merged_changes.append({"action": "update", "table_name": table_name, "row_id": row_id, "data": res_data})
+                continue
+
             s_diff = source_diffs.get(key)
             t_diff = target_diffs.get(key)
 

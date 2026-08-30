@@ -84,3 +84,23 @@ body::before {
 .animate-slide-up {
   animation: slide-up 0.4s ease-out;
 }
+
+/* ── Diff-specific animations ── */
+@keyframes diff-highlight {
+  0%   { background-color: rgba(139, 92, 246, 0.15); }
+  50%  { background-color: rgba(139, 92, 246, 0.05); }
+  100% { background-color: rgba(139, 92, 246, 0.15); }
+}
+@keyframes conflict-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-2px); }
+  75%      { transform: translateX(2px); }
+}
+
+.animate-diff-highlight {
+  animation: diff-highlight 2s ease-in-out infinite;
+}
+.animate-conflict-shake {
+  animation: conflict-shake 0.3s ease-in-out;
+}
+

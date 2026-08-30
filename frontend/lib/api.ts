@@ -149,3 +149,77 @@ export async function fetchTableData(
   );
   return data.rows;
 }
+
+// ── Diff & Merge types ──
+
+export interface DiffRow {
+  row_id: string;
+  status: "added" | "deleted" | "modified";
+  data_a: Record<string, unknown> | null;
+  data_b: Record<string, unknown> | null;
+  changed_fields?: string[];
+}
+
+export interface DiffTableResult {
+  rows: DiffRow[];
+}
+
+export interface DiffResult {
+  tables: Record<string, DiffTableResult>;
+}
+
+export interface MergeConflict {
+  table_name: string;
+  row_id: string;
+  data_ancestor: Record<string, unknown> | null;
+  data_target: Record<string, unknown> | null;
+  data_source: Record<string, unknown> | null;
+}
+
+export interface MergeAutoResolved {
+  table_name: string;
+  row_id: string;
+  resolution: string;
+  data: Record<string, unknown> | null;
+}
+
+export interface MergeResolution {
+  key: string;
+  data: Record<string, unknown> | null;
+}
+
+export interface MergeResponse {
+  status: "ok" | "conflict";
+  commit?: Commit;
+  conflicts?: MergeConflict[];
+  auto_resolved?: MergeAutoResolved[];
+}
+
+// ── Diff & Merge endpoints ──
+
+export async function fetchDiff(
+  commitA: string,
+  commitB: string
+): Promise<DiffResult> {
+  return apiFetch<DiffResult>(
+    `/diff?commit_a=${encodeURIComponent(commitA)}&commit_b=${encodeURIComponent(commitB)}`
+  );
+}
+
+export async function executeMerge(
+  targetBranch: string,
+  sourceBranch: string,
+  author: string,
+  resolutions?: MergeResolution[]
+): Promise<MergeResponse> {
+  return apiFetch<MergeResponse>("/merge", {
+    method: "POST",
+    body: JSON.stringify({
+      target_branch: targetBranch,
+      source_branch: sourceBranch,
+      author,
+      resolutions: resolutions || null,
+    }),
+  });
+}
+
