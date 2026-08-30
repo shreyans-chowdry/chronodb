@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
 import { useBranches, useCommits } from "@/hooks/useChronoDB";
 
 import BranchSwitcher from "@/components/BranchSwitcher";
@@ -84,8 +85,17 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Right: dark mode */}
+          {/* Right: nav + dark mode */}
           <div className="flex items-center gap-2">
+            <Link
+              href="/diff"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-700/40 bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-300"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+              </svg>
+              Diff & Merge
+            </Link>
             <DarkModeToggle />
           </div>
         </div>

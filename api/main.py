@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from api.routes import branches, commits, query
+from api.routes import branches, commits, query, merge
 
 app = FastAPI(title="ChronoDB API")
 
@@ -19,6 +19,7 @@ app.add_middleware(
 app.include_router(branches.router)
 app.include_router(commits.router)
 app.include_router(query.router)
+app.include_router(merge.router)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):

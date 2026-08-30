@@ -281,6 +281,303 @@ class VersionEngine:
         return self.commit(branch_name, rollback_msg, author, changes=changes)
 
     # ──────────────────────────────────────────────
+    # Diff & Merge
+    # ──────────────────────────────────────────────
+
+    def diff(self, commit_hash_a: str, commit_hash_b: str) -> Dict[str, Any]:
+        """
+        Compare two commits and produce a per-table, per-row diff.
+
+        For each (table, row_id) across both snapshots, classifies as:
+          - "added"    — exists only in B
+          - "deleted"  — exists only in A
+          - "modified" — exists in both but data differs
+          (unchanged rows are omitted)
+
+        Args:
+            commit_hash_a: The "before" commit hash (left side).
+            commit_hash_b: The "after" commit hash (right side).
+
+        Returns:
+            { "tables": { table_name: { "rows": [ ...DiffRow ] } } }
+        """
+        # Resolve commit IDs from hashes
+        id_a = self._resolve_commit_id(commit_hash_a)
+        id_b = self._resolve_commit_id(commit_hash_b)
+
+        # Collect all known (table_name, row_id) pairs
+        all_keys: set[tuple[str, str]] = set()
+        for table_name, row_ids in self.catalog.tables.items():
+            for row_id in row_ids:
+                all_keys.add((table_name, row_id))
+
+        # Build per-table diff
+        tables_diff: Dict[str, Dict[str, list]] = {}
+
+        for table_name, row_id in all_keys:
+            key = f"{table_name}:{row_id}"
+
+            page_a = self.btree.resolve_version(key, id_a, self.catalog.is_ancestor)
+            page_b = self.btree.resolve_version(key, id_b, self.catalog.is_ancestor)
+
+            data_a = self._read_page_data(page_a)
+            data_b = self._read_page_data(page_b)
+
+            exists_a = data_a is not None
+            exists_b = data_b is not None
+
+            if not exists_a and not exists_b:
+                continue
+
+            diff_row: Optional[Dict[str, Any]] = None
+
+            if exists_a and not exists_b:
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "deleted",
+                    "data_a": data_a,
+                    "data_b": None,
+                }
+            elif not exists_a and exists_b:
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "added",
+                    "data_a": None,
+                    "data_b": data_b,
+                }
+            elif data_a != data_b:
+                # Find changed fields
+                all_fields = set(list(data_a.keys()) + list(data_b.keys()))  # type: ignore
+                changed_fields = [
+                    f for f in all_fields if data_a.get(f) != data_b.get(f)  # type: ignore
+                ]
+                diff_row = {
+                    "row_id": row_id,
+                    "status": "modified",
+                    "data_a": data_a,
+                    "data_b": data_b,
+                    "changed_fields": changed_fields,
+                }
+            # else: unchanged — skip
+
+            if diff_row:
+                if table_name not in tables_diff:
+                    tables_diff[table_name] = {"rows": []}
+                tables_diff[table_name]["rows"].append(diff_row)
+
+        return {"tables": tables_diff}
+
+    def merge(
+        self,
+        target_branch: str,
+        source_branch: str,
+        author: str,
+        resolutions: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Three-way merge of source_branch into target_branch.
+
+        Finds the common ancestor (fork point), computes what changed on each
+        branch relative to it, and auto-merges non-conflicting changes. Rows
+        changed on both branches are conflicts and require a resolution.
+
+        Args:
+            target_branch: The branch to merge INTO (e.g. "main").
+            source_branch: The branch to merge FROM (e.g. "feature/x").
+            author: Author performing the merge.
+            resolutions: Optional dict of resolved conflicts, keyed by
+                         "table_name:row_id", with value being the chosen data
+                         dict (or None for deletion).
+
+        Returns:
+            On success: { "status": "ok", "commit": <merge commit dict> }
+            On conflict: { "status": "conflict", "conflicts": [...], "auto_resolved": [...] }
+        """
+        if resolutions is None:
+            resolutions = {}
+
+        target_info = self.catalog.get_branch(target_branch)
+        source_info = self.catalog.get_branch(source_branch)
+        if target_info is None:
+            raise ValueError(f"Branch '{target_branch}' does not exist")
+        if source_info is None:
+            raise ValueError(f"Branch '{source_branch}' does not exist")
+
+        target_head = target_info["head_commit_id"]
+        source_head = source_info["head_commit_id"]
+
+        # Find common ancestor (fork point)
+        ancestor_id = self._find_common_ancestor(target_head, source_head)
+        if ancestor_id is None:
+            raise ValueError("No common ancestor found between the two branches")
+
+        # Collect all known keys
+        all_keys: set[tuple[str, str]] = set()
+        for table_name, row_ids in self.catalog.tables.items():
+            for row_id in row_ids:
+                all_keys.add((table_name, row_id))
+
+        conflicts: list[Dict[str, Any]] = []
+        auto_resolved: list[Dict[str, Any]] = []
+        merge_changes: list[Dict[str, Any]] = []
+
+        for table_name, row_id in all_keys:
+            key = f"{table_name}:{row_id}"
+
+            page_anc = self.btree.resolve_version(key, ancestor_id, self.catalog.is_ancestor)
+            page_tgt = self.btree.resolve_version(key, target_head, self.catalog.is_ancestor)
+            page_src = self.btree.resolve_version(key, source_head, self.catalog.is_ancestor)
+
+            data_anc = self._read_page_data(page_anc)
+            data_tgt = self._read_page_data(page_tgt)
+            data_src = self._read_page_data(page_src)
+
+            changed_on_target = (data_tgt != data_anc)
+            changed_on_source = (data_src != data_anc)
+
+            if not changed_on_target and not changed_on_source:
+                # No change on either side — skip
+                continue
+
+            if changed_on_source and not changed_on_target:
+                # Only source changed — auto-merge (take source)
+                if data_src is not None:
+                    merge_changes.append({
+                        "action": "update",
+                        "table_name": table_name,
+                        "row_id": row_id,
+                        "data": data_src,
+                    })
+                else:
+                    merge_changes.append({
+                        "action": "delete",
+                        "table_name": table_name,
+                        "row_id": row_id,
+                        "data": None,
+                    })
+                auto_resolved.append({
+                    "table_name": table_name,
+                    "row_id": row_id,
+                    "resolution": "take_source",
+                    "data": data_src,
+                })
+
+            elif changed_on_target and not changed_on_source:
+                # Only target changed — already in target, nothing to merge
+                auto_resolved.append({
+                    "table_name": table_name,
+                    "row_id": row_id,
+                    "resolution": "keep_target",
+                    "data": data_tgt,
+                })
+
+            else:
+                # Both changed — conflict!
+                resolution_key = f"{table_name}:{row_id}"
+                if resolution_key in resolutions:
+                    # User provided a resolution
+                    chosen = resolutions[resolution_key]
+                    if chosen is not None:
+                        merge_changes.append({
+                            "action": "update",
+                            "table_name": table_name,
+                            "row_id": row_id,
+                            "data": chosen,
+                        })
+                    else:
+                        merge_changes.append({
+                            "action": "delete",
+                            "table_name": table_name,
+                            "row_id": row_id,
+                            "data": None,
+                        })
+                else:
+                    # Unresolved conflict
+                    conflicts.append({
+                        "table_name": table_name,
+                        "row_id": row_id,
+                        "data_ancestor": data_anc,
+                        "data_target": data_tgt,
+                        "data_source": data_src,
+                    })
+
+        if conflicts:
+            return {
+                "status": "conflict",
+                "conflicts": conflicts,
+                "auto_resolved": auto_resolved,
+            }
+
+        # All clear — create the merge commit
+        ancestor_commit = self.catalog.get_commit(ancestor_id)
+        source_commit_data = self.catalog.get_commit(source_head)
+        merge_message = f"Merge branch '{source_branch}' into '{target_branch}'"
+
+        merge_result = self.commit(
+            branch_name=target_branch,
+            message=merge_message,
+            author=author,
+            changes=merge_changes if merge_changes else None,
+            second_parent_id=source_head,
+        )
+
+        return {"status": "ok", "commit": merge_result}
+
+    def _find_common_ancestor(self, commit_a: int, commit_b: int) -> Optional[int]:
+        """
+        Find the common ancestor of two commits by collecting the ancestor
+        set of commit_a, then walking commit_b's chain until a match is found.
+        """
+        # Collect all ancestors of commit A (including A itself)
+        ancestors_a: set[int] = set()
+        current = commit_a
+        while current is not None:
+            ancestors_a.add(current)
+            commit = self.catalog.get_commit(current)
+            if commit is None:
+                break
+            current = commit.get("parent_id")
+
+        # Walk commit B chain until we find a match
+        current = commit_b
+        while current is not None:
+            if current in ancestors_a:
+                return current
+            commit = self.catalog.get_commit(current)
+            if commit is None:
+                break
+            current = commit.get("parent_id")
+
+        return None
+
+    def _read_page_data(self, page_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        """
+        Read and parse JSON data from a page. Returns None if page_id is
+        invalid or the page is a tombstone (deletion marker).
+        """
+        if page_id is None or page_id == INVALID_PAGE_ID:
+            return None
+        page = self.pool.fetch_page(page_id)
+        if not page:
+            return None
+        null_idx = page.data.find(b'\x00')
+        if null_idx == -1:
+            null_idx = PAGE_SIZE
+        if null_idx > 0:
+            data_json = page.data[:null_idx].decode('utf-8')
+            self.pool.unpin_page(page_id, is_dirty=False)
+            return json.loads(data_json)
+        self.pool.unpin_page(page_id, is_dirty=False)
+        return None
+
+    def _resolve_commit_id(self, commit_hash: str) -> int:
+        """Resolve a commit hash to its integer ID, or raise ValueError."""
+        for cid, cdata in self.catalog.commits.items():
+            if cdata["hash"] == commit_hash:
+                return cid
+        raise ValueError(f"Commit '{commit_hash}' does not exist")
+
+    # ──────────────────────────────────────────────
     # Data operations (CRUD through the version engine)
     # ──────────────────────────────────────────────
 
