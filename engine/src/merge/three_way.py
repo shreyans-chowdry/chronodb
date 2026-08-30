@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..storage.buffer_pool import BufferPoolManager
 from ..storage.page import INVALID_PAGE_ID, PAGE_SIZE
+from ..storage.reader import read_row_data
 from ..index.btree import BTreeIndex
 from ..version.catalog import SystemCatalog
 
@@ -427,21 +428,7 @@ class ThreeWayMerge:
         if page_version_id is None or page_version_id == INVALID_PAGE_ID:
             return None
 
-        page = self.pool.fetch_page(page_version_id)
-        if not page:
-            return None
-
-        null_idx = page.data.find(b'\x00')
-        if null_idx == -1:
-            null_idx = PAGE_SIZE
-        if null_idx == 0:
-            self.pool.unpin_page(page_version_id, is_dirty=False)
-            return None
-
-        data_json = page.data[:null_idx].decode('utf-8')
-        self.pool.unpin_page(page_version_id, is_dirty=False)
-
-        return json.loads(data_json)
+        return read_row_data(self.pool, page_version_id)
 
     def _diff_to_change(self, diff: RowDiff) -> Dict[str, Any]:
         """Convert a RowDiff into a change dict compatible with engine.commit()."""

@@ -21,6 +21,8 @@ from ..storage.buffer_pool import BufferPoolManager
 from ..wal.wal_manager import WALManager
 from ..index.btree import BTreeIndex
 from ..storage.page import INVALID_PAGE_ID, PAGE_SIZE
+from ..storage.reader import read_row_data
+from ..storage.optimizer import StorageOptimizer, OptimizerReport
 from .schema import _compute_hash
 from .catalog import SystemCatalog
 from ..merge.three_way import ThreeWayMerge
@@ -255,19 +257,20 @@ class VersionEngine:
                 
                 if target_page_id is not None and target_page_id != INVALID_PAGE_ID:
                     # Row existed at target commit, read its data
-                    page = self.pool.fetch_page(target_page_id)
-                    if page:
-                        null_idx = page.data.find(b'\x00')
-                        if null_idx == -1:
-                            null_idx = PAGE_SIZE
-                        data_json = page.data[:null_idx].decode('utf-8')
-                        self.pool.unpin_page(target_page_id, is_dirty=False)
-                        
+                    row_data = read_row_data(self.pool, target_page_id)
+                    if row_data is not None:
                         changes.append({
                             "action": "update",  # update/insert semantics are same here
                             "table_name": table_name,
                             "row_id": row_id,
-                            "data": json.loads(data_json)
+                            "data": row_data
+                        })
+                    else:
+                        changes.append({
+                            "action": "delete",
+                            "table_name": table_name,
+                            "row_id": row_id,
+                            "data": None
                         })
                 else:
                     # Row was deleted or didn't exist at target commit
@@ -379,6 +382,30 @@ class VersionEngine:
         return {"merged": True, "commit": merge_commit, "strategy": "three-way"}
 
     # ──────────────────────────────────────────────
+    # Adaptive Storage Optimizer
+    # ──────────────────────────────────────────────
+
+    def optimize_storage(self, cold_threshold: int = 5) -> OptimizerReport:
+        """
+        Run the Adaptive Storage Optimizer to compress cold versions into deltas.
+        
+        Args:
+            cold_threshold: Commit age threshold for cold versions (default: 5).
+            
+        Returns:
+            OptimizerReport detailing pages scanned, compressed, and bytes saved.
+        """
+        optimizer = StorageOptimizer(
+            self.catalog, self.btree, self.pool, cold_threshold=cold_threshold
+        )
+        return optimizer.optimize()
+
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """Get summary storage and compression statistics."""
+        optimizer = StorageOptimizer(self.catalog, self.btree, self.pool)
+        return optimizer.get_storage_stats()
+
+    # ──────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────
 
@@ -393,17 +420,10 @@ class VersionEngine:
             )
             
             if page_version_id is not None and page_version_id != INVALID_PAGE_ID:
-                page = self.pool.fetch_page(page_version_id)
-                if page:
-                    null_idx = page.data.find(b'\x00')
-                    if null_idx == -1:
-                        null_idx = PAGE_SIZE
-                    # Avoid empty string decode issues
-                    if null_idx > 0:
-                        data_json = page.data[:null_idx].decode('utf-8')
-                        row = {"row_id": row_id}
-                        row.update(json.loads(data_json))
-                        results.append(row)
-                    self.pool.unpin_page(page_version_id, is_dirty=False)
+                row_data = read_row_data(self.pool, page_version_id)
+                if row_data is not None:
+                    row = {"row_id": row_id}
+                    row.update(row_data)
+                    results.append(row)
                     
         return results
