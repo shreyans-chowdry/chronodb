@@ -154,18 +154,87 @@ class SystemCatalog:
         """
         Check if ancestor_id is an ancestor of target_id in the commit DAG.
         Returns True if ancestor_id == target_id.
+        
+        Uses BFS traversal that follows both parent_id and second_parent_id
+        to correctly handle merge commits.
         """
         if ancestor_id == target_id:
             return True
-            
-        # Walk up from target_id
-        current_id = target_id
-        while current_id is not None:
+
+        # BFS through the DAG
+        visited = set()
+        queue = [target_id]
+
+        while queue:
+            current_id = queue.pop(0)
+            if current_id is None or current_id in visited:
+                continue
             if current_id == ancestor_id:
                 return True
+            visited.add(current_id)
+
             commit = self.commits.get(current_id)
             if not commit:
-                break
-            current_id = commit.get("parent_id")
-            
+                continue
+            parent = commit.get("parent_id")
+            if parent is not None:
+                queue.append(parent)
+            second_parent = commit.get("second_parent_id")
+            if second_parent is not None:
+                queue.append(second_parent)
+
         return False
+
+    def find_lca(self, commit_id_a: int, commit_id_b: int) -> Optional[int]:
+        """
+        Find the Lowest Common Ancestor of two commits in the commit DAG.
+        
+        Uses a two-pointer BFS approach: expand ancestors of both commits
+        layer by layer, and return the first commit found in both ancestor sets.
+        
+        Returns None if no common ancestor exists (should not happen in a
+        well-formed repo since all branches share the initial commit).
+        """
+        if commit_id_a == commit_id_b:
+            return commit_id_a
+
+        ancestors_a = set()
+        ancestors_b = set()
+        queue_a = [commit_id_a]
+        queue_b = [commit_id_b]
+
+        while queue_a or queue_b:
+            # Expand one layer from A
+            if queue_a:
+                current = queue_a.pop(0)
+                if current is not None and current not in ancestors_a:
+                    if current in ancestors_b:
+                        return current
+                    ancestors_a.add(current)
+                    commit = self.commits.get(current)
+                    if commit:
+                        parent = commit.get("parent_id")
+                        if parent is not None:
+                            queue_a.append(parent)
+                        second_parent = commit.get("second_parent_id")
+                        if second_parent is not None:
+                            queue_a.append(second_parent)
+
+            # Expand one layer from B
+            if queue_b:
+                current = queue_b.pop(0)
+                if current is not None and current not in ancestors_b:
+                    if current in ancestors_a:
+                        return current
+                    ancestors_b.add(current)
+                    commit = self.commits.get(current)
+                    if commit:
+                        parent = commit.get("parent_id")
+                        if parent is not None:
+                            queue_b.append(parent)
+                        second_parent = commit.get("second_parent_id")
+                        if second_parent is not None:
+                            queue_b.append(second_parent)
+
+        return None
+

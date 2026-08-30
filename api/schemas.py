@@ -25,6 +25,11 @@ class RollbackRequest(BaseModel):
     target_commit_hash: str = Field(..., description="Commit hash to rollback to")
     author: str = Field(..., description="Author of the rollback commit")
 
+class MergeRequest(BaseModel):
+    source_branch: str = Field(..., description="Branch to merge from")
+    target_branch: str = Field(..., description="Branch to merge into")
+    author: str = Field(..., description="Author of the merge commit")
+
 class ErrorDetail(BaseModel):
     code: str
     message: str
