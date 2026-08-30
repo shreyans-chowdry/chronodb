@@ -8,7 +8,7 @@ Design decisions:
   - rollback() creates a NEW commit (Git revert semantics), never rewrites history
   - branch() is O(1): it creates a pointer to the source branch's HEAD, no data copy
   - Every mutation (insert/update/delete) produces a new row_versions entry in
-    the Buffer Pool and adds a new version to the key's Version Chain in the B+ Tree.
+    the Buffer PoolHello.  and adds a new version to the key's Version Chain in the B+ Tree.
 """
 
 import json
@@ -23,6 +23,7 @@ from ..index.btree import BTreeIndex
 from ..storage.page import INVALID_PAGE_ID, PAGE_SIZE
 from .schema import _compute_hash
 from .catalog import SystemCatalog
+from ..merge.three_way import ThreeWayMerge
 
 
 class VersionEngine:
@@ -336,6 +337,46 @@ class VersionEngine:
         target_id = valid_commits[0]["id"]
         
         return self._resolve_table_data(table_name, target_id)
+
+    # ──────────────────────────────────────────────
+    # Three-Way Merge
+    # ──────────────────────────────────────────────
+
+    def merge(
+        self,
+        source_branch: str,
+        target_branch: str,
+        author: str,
+    ) -> Dict[str, Any]:
+        """
+        Three-way merge of source_branch into target_branch.
+
+        Finds the Lowest Common Ancestor, computes row/cell-level diffs,
+        auto-merges non-conflicting changes, and returns conflicts if any.
+
+        Returns:
+          - On success: {"merged": True, "commit": <commit_dict>, ...}
+          - On conflict: {"merged": False, "conflicting_rows": [...]}
+        """
+        merger = ThreeWayMerge(self.catalog, self.btree, self.pool)
+        result = merger.merge(source_branch, target_branch, author)
+
+        if not result["merged"]:
+            return result
+
+        # Fast-forward merges don't need a new commit
+        if result.get("strategy") == "fast-forward":
+            return result
+
+        # Create the actual merge commit on the target branch
+        merge_commit = self.commit(
+            branch_name=target_branch,
+            message=result["message"],
+            author=result["author"],
+            changes=result.get("changes"),
+            second_parent_id=result["source_head"],
+        )
+        return {"merged": True, "commit": merge_commit, "strategy": "three-way"}
 
     # ──────────────────────────────────────────────
     # Internal helpers
