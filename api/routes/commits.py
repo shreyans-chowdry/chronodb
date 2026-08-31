@@ -23,6 +23,16 @@ async def create_commit(commit: CommitCreate, engine: VersionEngine = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/commits/graph")
+async def get_commit_graph(engine: VersionEngine = Depends(get_engine)):
+    """Return all commits across all branches for graph visualization."""
+    try:
+        commits = engine.get_all_commits()
+        branches = engine.list_branches()
+        return {"commits": commits, "branches": branches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/commits")
 async def get_commits(branch_name: Optional[str] = None, engine: VersionEngine = Depends(get_engine)):
     try:
