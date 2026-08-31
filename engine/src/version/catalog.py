@@ -238,3 +238,31 @@ class SystemCatalog:
 
         return None
 
+    def delete_branch(self, name: str) -> bool:
+        """
+        Delete a branch by name. Returns True if deleted, False if not found.
+        Does NOT delete commits — they become orphaned until GC reclaims them.
+        Cannot delete 'main'.
+        """
+        if name == "main":
+            raise ValueError("Cannot delete the 'main' branch")
+        if name not in self.branches:
+            return False
+        del self.branches[name]
+        self.save()
+        return True
+
+    def remove_commits(self, commit_ids: set) -> int:
+        """
+        Remove a set of commit IDs from the catalog. Used by GC.
+        Returns the number of commits actually removed.
+        """
+        removed = 0
+        for cid in commit_ids:
+            if cid in self.commits:
+                del self.commits[cid]
+                removed += 1
+        if removed > 0:
+            self.save()
+        return removed
+
