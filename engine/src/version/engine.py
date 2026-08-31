@@ -26,6 +26,7 @@ from ..storage.optimizer import StorageOptimizer, OptimizerReport
 from .schema import _compute_hash
 from .catalog import SystemCatalog
 from ..merge.three_way import ThreeWayMerge
+from .gc import GarbageCollector, GCReport
 
 
 class VersionEngine:
@@ -444,6 +445,34 @@ class VersionEngine:
             second_parent_id=result["source_head"],
         )
         return {"merged": True, "commit": merge_commit, "strategy": "three-way"}
+
+    # ──────────────────────────────────────────────
+    # Branch Deletion & Garbage Collection
+    # ──────────────────────────────────────────────
+
+    def delete_branch(self, name: str) -> bool:
+        """
+        Delete a branch by name.
+
+        The branch's commits become orphaned in the DAG. Use gc() to
+        reclaim their page versions afterward.
+
+        Returns True if deleted. Raises ValueError for 'main'.
+        """
+        if name == self._current_branch:
+            self._current_branch = "main"
+        return self.catalog.delete_branch(name)
+
+    def gc(self) -> GCReport:
+        """
+        Run mark-and-sweep garbage collection.
+
+        Finds commits unreachable from any branch HEAD, prunes their
+        version chain entries from the B+ Tree, deallocates their pages,
+        and removes them from the catalog.
+        """
+        collector = GarbageCollector(self.catalog, self.btree, self.pool)
+        return collector.collect()
 
     # ──────────────────────────────────────────────
     # Adaptive Storage Optimizer
