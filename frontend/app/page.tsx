@@ -8,7 +8,7 @@ import BranchSwitcher from "@/components/BranchSwitcher";
 import TableViewer from "@/components/TableViewer";
 import CommitPanel from "@/components/CommitPanel";
 import CommitHistory from "@/components/CommitHistory";
-import DarkModeToggle from "@/components/DarkModeToggle";
+
 import ErrorState from "@/components/ErrorState";
 
 export default function DashboardPage() {
@@ -47,7 +47,7 @@ export default function DashboardPage() {
   return (
     <div className="flex min-h-screen flex-col">
       {/* ── Top bar ── */}
-      <header className="sticky top-0 z-30 border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4 sm:px-6">
           {/* Logo */}
           <div className="flex items-center gap-3">
@@ -57,10 +57,10 @@ export default function DashboardPage() {
               </svg>
             </div>
             <div>
-              <h1 className="text-sm font-bold tracking-tight text-zinc-100">
+              <h1 className="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                 ChronoDB
               </h1>
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
                 Version-Controlled Database
               </p>
             </div>
@@ -74,7 +74,7 @@ export default function DashboardPage() {
                 onRetry={refetchBranches}
               />
             ) : branchesLoading || !branches ? (
-              <div className="h-8 w-32 animate-pulse rounded-lg bg-zinc-800/50" />
+              <div className="h-8 w-32 animate-pulse rounded-lg bg-zinc-50/50 dark:bg-zinc-800/50" />
             ) : (
               <BranchSwitcher
                 branches={branches}
@@ -85,18 +85,17 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Right: nav + dark mode */}
+          {/* Right: nav (Diff & Merge link) */}
           <div className="flex items-center gap-2">
             <Link
               href="/diff"
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-700/40 bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-300"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200/50 dark:border-zinc-700/40 bg-zinc-50/50 dark:bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
             >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
               </svg>
               Diff & Merge
             </Link>
-            <DarkModeToggle />
           </div>
         </div>
       </header>
@@ -149,7 +148,7 @@ export default function DashboardPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-800/40 py-3 text-center text-[10px] text-zinc-600">
+      <footer className="border-t border-zinc-200/40 dark:border-zinc-800/40 py-3 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
         ChronoDB · Version-Controlled Database Engine · Built with Next.js + FastAPI
       </footer>
     </div>

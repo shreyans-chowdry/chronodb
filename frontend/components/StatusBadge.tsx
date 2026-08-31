@@ -7,7 +7,7 @@ interface StatusBadgeProps {
 
 const variantStyles: Record<string, string> = {
   default:
-    "bg-zinc-700/50 text-zinc-300 border-zinc-600/50",
+    "bg-zinc-100/50 dark:bg-zinc-700/50 text-zinc-700 dark:text-zinc-300 border-zinc-300/50 dark:border-zinc-600/50",
   success:
     "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   warning:

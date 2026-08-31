@@ -72,33 +72,33 @@ export default function MergePanel({
   const fields = Array.from(allFields);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-amber-500/30 bg-zinc-900/50 backdrop-blur-sm animate-fade-in">
+    <div className="overflow-hidden rounded-xl border border-amber-300 bg-white shadow-xs animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-amber-500/20 bg-amber-500/5 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50/80 px-4 py-3">
         <div className="flex items-center gap-2">
-          <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <svg className="h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
           </svg>
-          <h3 className="text-sm font-semibold text-amber-200">
+          <h3 className="text-sm font-semibold text-amber-900">
             Merge Conflicts — {conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""} detected
           </h3>
         </div>
-        <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[10px] font-medium text-amber-400">
+        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-medium text-amber-800">
           {Object.keys(choices).length}/{conflicts.length} resolved
         </span>
       </div>
 
       {/* Conflict description */}
-      <div className="border-b border-zinc-700/40 px-4 py-2.5">
-        <p className="text-xs text-zinc-400">
-          Both <span className="font-semibold text-violet-400">{targetBranch}</span> and{" "}
-          <span className="font-semibold text-violet-400">{sourceBranch}</span> modified the
+      <div className="border-b border-zinc-200 bg-zinc-50/30 px-4 py-2.5">
+        <p className="text-xs text-zinc-600">
+          Both <span className="font-semibold text-violet-700">{targetBranch}</span> and{" "}
+          <span className="font-semibold text-violet-700">{sourceBranch}</span> modified the
           following rows. Choose which version to keep for each conflict.
         </p>
       </div>
 
       {/* Conflicts list */}
-      <div className="divide-y divide-zinc-800/50">
+      <div className="divide-y divide-zinc-200">
         {conflicts.map((conflict) => {
           const key = `${conflict.table_name}:${conflict.row_id}`;
           const currentChoice = choices[key];
@@ -108,15 +108,15 @@ export default function MergePanel({
               {/* Conflict row header */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-300">
+                  <span className="rounded border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700">
                     {conflict.table_name}
                   </span>
-                  <span className="font-mono text-xs text-violet-400/80">
+                  <span className="font-mono text-xs font-semibold text-violet-700">
                     {conflict.row_id}
                   </span>
                 </div>
                 {currentChoice && (
-                  <span className="text-[10px] text-emerald-400">✓ Resolved</span>
+                  <span className="text-[10px] font-semibold text-emerald-700">✓ Resolved</span>
                 )}
               </div>
 
@@ -127,19 +127,19 @@ export default function MergePanel({
                   onClick={() => handleChoice(key, "target")}
                   className={`group rounded-lg border p-3 text-left transition-all ${
                     currentChoice === "target"
-                      ? "border-violet-500/60 bg-violet-500/10 ring-1 ring-violet-500/30"
-                      : "border-zinc-700/40 bg-zinc-800/30 hover:border-zinc-600/60 hover:bg-zinc-800/50"
+                      ? "border-violet-600 bg-violet-50/70 ring-1 ring-violet-500 shadow-xs"
+                      : "border-zinc-200 bg-zinc-50/50 hover:border-zinc-300 hover:bg-zinc-100/60"
                   }`}
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">
                       Ours ({targetBranch})
                     </span>
                     <div
                       className={`h-4 w-4 rounded-full border-2 transition-colors ${
                         currentChoice === "target"
-                          ? "border-violet-400 bg-violet-500"
-                          : "border-zinc-600 group-hover:border-zinc-500"
+                          ? "border-violet-600 bg-violet-600"
+                          : "border-zinc-400 group-hover:border-zinc-500"
                       }`}
                     >
                       {currentChoice === "target" && (
@@ -154,13 +154,13 @@ export default function MergePanel({
                       fields.map((f) => (
                         <div key={f} className="flex items-center gap-2 text-xs">
                           <span className="w-20 shrink-0 truncate text-zinc-500">{f}:</span>
-                          <span className="truncate font-mono text-zinc-300">
+                          <span className="truncate font-mono font-medium text-zinc-800">
                             {String(conflict.data_target?.[f] ?? "—")}
                           </span>
                         </div>
                       ))
                     ) : (
-                      <span className="text-xs italic text-red-400/60">(deleted)</span>
+                      <span className="text-xs italic text-red-600">(deleted)</span>
                     )}
                   </div>
                 </button>
@@ -170,19 +170,19 @@ export default function MergePanel({
                   onClick={() => handleChoice(key, "source")}
                   className={`group rounded-lg border p-3 text-left transition-all ${
                     currentChoice === "source"
-                      ? "border-emerald-500/60 bg-emerald-500/10 ring-1 ring-emerald-500/30"
-                      : "border-zinc-700/40 bg-zinc-800/30 hover:border-zinc-600/60 hover:bg-zinc-800/50"
+                      ? "border-emerald-600 bg-emerald-50/70 ring-1 ring-emerald-500 shadow-xs"
+                      : "border-zinc-200 bg-zinc-50/50 hover:border-zinc-300 hover:bg-zinc-100/60"
                   }`}
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">
                       Theirs ({sourceBranch})
                     </span>
                     <div
                       className={`h-4 w-4 rounded-full border-2 transition-colors ${
                         currentChoice === "source"
-                          ? "border-emerald-400 bg-emerald-500"
-                          : "border-zinc-600 group-hover:border-zinc-500"
+                          ? "border-emerald-600 bg-emerald-600"
+                          : "border-zinc-400 group-hover:border-zinc-500"
                       }`}
                     >
                       {currentChoice === "source" && (
@@ -197,13 +197,13 @@ export default function MergePanel({
                       fields.map((f) => (
                         <div key={f} className="flex items-center gap-2 text-xs">
                           <span className="w-20 shrink-0 truncate text-zinc-500">{f}:</span>
-                          <span className="truncate font-mono text-zinc-300">
+                          <span className="truncate font-mono font-medium text-zinc-800">
                             {String(conflict.data_source?.[f] ?? "—")}
                           </span>
                         </div>
                       ))
                     ) : (
-                      <span className="text-xs italic text-red-400/60">(deleted)</span>
+                      <span className="text-xs italic text-red-600">(deleted)</span>
                     )}
                   </div>
                 </button>
@@ -215,14 +215,14 @@ export default function MergePanel({
 
       {/* Error display */}
       {error && (
-        <div className="border-t border-red-500/20 bg-red-500/5 px-4 py-2.5">
-          <p className="text-xs text-red-400">{error}</p>
+        <div className="border-t border-red-200 bg-red-50 px-4 py-2.5">
+          <p className="text-xs text-red-700">{error}</p>
         </div>
       )}
 
       {/* Action bar */}
-      <div className="flex items-center justify-between border-t border-zinc-700/40 px-4 py-3">
-        <p className="text-[11px] text-zinc-500">
+      <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50/50 px-4 py-3">
+        <p className="text-[11px] text-zinc-600">
           {allResolved
             ? "All conflicts resolved — ready to merge"
             : `Resolve ${conflicts.length - Object.keys(choices).length} remaining conflict${
@@ -234,8 +234,8 @@ export default function MergePanel({
           disabled={!allResolved || merging}
           className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all active:scale-95 ${
             allResolved
-              ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/20 hover:from-violet-500 hover:to-indigo-500"
-              : "cursor-not-allowed bg-zinc-800 text-zinc-500"
+              ? "bg-violet-600 text-white shadow-md shadow-violet-500/20 hover:bg-violet-500"
+              : "cursor-not-allowed bg-zinc-200 text-zinc-400"
           }`}
         >
           {merging ? (

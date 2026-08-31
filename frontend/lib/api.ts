@@ -76,7 +76,7 @@ export async function createBranch(
 
 export async function checkoutBranch(name: string): Promise<string> {
   const data = await apiFetch<{ checked_out_branch: string }>(
-    `/branches/${encodeURIComponent(name)}/checkout`,
+    `/branches/checkout?name=${encodeURIComponent(name)}`,
     { method: "POST" }
   );
   return data.checked_out_branch;

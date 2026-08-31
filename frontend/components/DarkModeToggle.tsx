@@ -32,7 +32,7 @@ export default function DarkModeToggle() {
     <button
       onClick={toggle}
       aria-label="Toggle dark mode"
-      className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/50 bg-zinc-800/50 text-zinc-400 transition-all hover:border-zinc-600 hover:bg-zinc-700/50 hover:text-zinc-200 active:scale-90"
+      className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200/50 dark:border-zinc-700/50 bg-zinc-50/50 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-400 transition-all hover:border-zinc-300 hover:dark:border-zinc-600 hover:bg-zinc-100/50 hover:dark:bg-zinc-700/50 hover:text-zinc-800 hover:dark:text-zinc-200 active:scale-90"
     >
       {dark ? (
         /* Moon icon */

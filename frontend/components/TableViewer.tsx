@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTables, useTableData } from "@/hooks/useChronoDB";
 import { createCommit } from "@/lib/api";
 import ErrorState from "./ErrorState";
@@ -16,7 +16,7 @@ function SkeletonRow({ cols }: { cols: number }) {
     <tr className="animate-pulse">
       {Array.from({ length: cols }).map((_, i) => (
         <td key={i} className="px-4 py-3">
-          <div className="h-4 w-full rounded bg-zinc-700/50" />
+          <div className="h-4 w-full rounded bg-zinc-100" />
         </td>
       ))}
     </tr>
@@ -52,9 +52,11 @@ export default function TableViewer({
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Auto-select first table if none selected
-  if (!selectedTable && tables && tables.length > 0) {
-    onSelectTable(tables[0]);
-  }
+  useEffect(() => {
+    if (!selectedTable && tables && tables.length > 0) {
+      onSelectTable(tables[0]);
+    }
+  }, [selectedTable, tables, onSelectTable]);
 
   // Derive column names from row data
   const columns =
@@ -112,17 +114,17 @@ export default function TableViewer({
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-700/40 bg-zinc-900/50 backdrop-blur-sm">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xs">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-700/40 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 bg-zinc-50/50">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Data Viewer</h2>
+          <h2 className="text-sm font-semibold text-zinc-900">Data Viewer</h2>
           {/* Table selector */}
           {tables && tables.length > 0 && (
             <select
               value={selectedTable || ""}
               onChange={(e) => onSelectTable(e.target.value || null)}
-              className="rounded-lg border border-zinc-700/50 bg-zinc-800/80 px-2.5 py-1 text-xs text-zinc-300 outline-none focus:border-violet-500/50"
+              className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs text-zinc-800 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
             >
               {tables.map((t) => (
                 <option key={t} value={t}>
@@ -148,7 +150,7 @@ export default function TableViewer({
               refetchTables();
               refetchRows();
             }}
-            className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
             title="Refresh"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -180,12 +182,12 @@ export default function TableViewer({
 
         {!tablesError && tables && tables.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
-            <svg className="h-10 w-10 text-zinc-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <svg className="h-10 w-10 text-zinc-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
             </svg>
             <div>
-              <p className="text-sm font-medium text-zinc-400">No tables on branch &lsquo;{branchName}&rsquo;</p>
-              <p className="text-xs text-zinc-600 mt-0.5">
+              <p className="text-sm font-medium text-zinc-700">No tables on branch &lsquo;{branchName}&rsquo;</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
                 Create a table to start storing version-controlled data
               </p>
             </div>
@@ -208,7 +210,7 @@ export default function TableViewer({
                 <p className="text-sm text-zinc-500">Table &lsquo;{selectedTable}&rsquo; is empty</p>
                 <button
                   onClick={() => handleOpenModal(selectedTable)}
-                  className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
+                  className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 transition-colors"
                 >
                   Insert Row
                 </button>
@@ -216,21 +218,21 @@ export default function TableViewer({
             ) : (
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-zinc-700/40 bg-zinc-800/30">
-                    <th className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+                  <tr className="border-b border-zinc-200 bg-zinc-50/80">
+                    <th className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-zinc-600">
                       row_id
                     </th>
                     {columns.map((col) => (
                       <th
                         key={col}
-                        className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-zinc-500"
+                        className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-zinc-600"
                       >
                         {col}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-zinc-200">
                   {rowsLoading
                     ? Array.from({ length: 3 }).map((_, i) => (
                         <SkeletonRow key={i} cols={columns.length + 1} />
@@ -238,15 +240,15 @@ export default function TableViewer({
                     : rows.map((row, idx) => (
                         <tr
                           key={row.row_id || idx}
-                          className="transition-colors hover:bg-zinc-800/30"
+                          className="transition-colors hover:bg-zinc-50"
                         >
-                          <td className="px-4 py-2.5 font-mono text-xs text-violet-400/80">
+                          <td className="px-4 py-2.5 font-mono text-xs font-medium text-violet-700">
                             {row.row_id}
                           </td>
                           {columns.map((col) => (
                             <td
                               key={col}
-                              className="px-4 py-2.5 text-sm text-zinc-300"
+                              className="px-4 py-2.5 text-sm text-zinc-800"
                             >
                               {String(row[col] ?? "")}
                             </td>
@@ -262,14 +264,14 @@ export default function TableViewer({
 
       {/* Footer */}
       {rows && rows.length > 0 && (
-        <div className="flex items-center justify-between border-t border-zinc-700/40 px-4 py-2">
+        <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50/30 px-4 py-2">
           <p className="text-[10px] text-zinc-500">
             {rows.length} row{rows.length !== 1 ? "s" : ""} ·{" "}
             {columns.length} column{columns.length !== 1 ? "s" : ""}
           </p>
           <button
             onClick={() => handleOpenModal(selectedTable || undefined)}
-            className="text-[11px] font-medium text-violet-400 hover:text-violet-300"
+            className="text-[11px] font-medium text-violet-600 hover:text-violet-700"
           >
             + Add Row to {selectedTable}
           </button>
@@ -278,29 +280,29 @@ export default function TableViewer({
 
       {/* Add Table / Insert Row Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-xl border border-zinc-700/60 bg-zinc-900 p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-sm font-semibold text-zinc-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl border border-zinc-200 bg-white p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-zinc-200 pb-3">
+              <h3 className="text-sm font-semibold text-zinc-900">
                 Add Table / Insert Record
               </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-zinc-500 hover:text-zinc-300"
+                className="text-zinc-400 hover:text-zinc-700 p-1 rounded"
               >
                 ✕
               </button>
             </div>
 
             {modalError && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400">
+              <div className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-600">
                 {modalError}
               </div>
             )}
 
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto pr-1 flex-1">
               <div>
-                <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                   Table Name
                 </label>
                 <input
@@ -308,12 +310,12 @@ export default function TableViewer({
                   value={tableNameInput}
                   onChange={(e) => setTableNameInput(e.target.value)}
                   placeholder="e.g. users, products"
-                  className="w-full rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500"
+                  className="w-full rounded-lg border border-zinc-300 bg-zinc-50/50 px-3 py-1.5 text-xs text-zinc-900 outline-none focus:border-violet-500 focus:bg-white"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                   Row ID
                 </label>
                 <input
@@ -321,59 +323,59 @@ export default function TableViewer({
                   value={rowIdInput}
                   onChange={(e) => setRowIdInput(e.target.value)}
                   placeholder="e.g. row_101"
-                  className="w-full rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500"
+                  className="w-full rounded-lg border border-zinc-300 bg-zinc-50/50 px-3 py-1.5 text-xs text-zinc-900 outline-none focus:border-violet-500 focus:bg-white"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                   Data (JSON Object)
                 </label>
                 <textarea
                   rows={4}
                   value={dataInput}
                   onChange={(e) => setDataInput(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 font-mono text-xs text-zinc-200 outline-none focus:border-violet-500"
+                  className="w-full rounded-lg border border-zinc-300 bg-zinc-50/50 px-3 py-1.5 font-mono text-xs text-zinc-900 outline-none focus:border-violet-500 focus:bg-white"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                  <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                     Author
                   </label>
                   <input
                     type="text"
                     value={authorInput}
                     onChange={(e) => setAuthorInput(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500"
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50/50 px-3 py-1.5 text-xs text-zinc-900 outline-none focus:border-violet-500 focus:bg-white"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium text-zinc-400 mb-1">
+                  <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                     Commit Message
                   </label>
                   <input
                     type="text"
                     value={commitMsgInput}
                     onChange={(e) => setCommitMsgInput(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500"
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50/50 px-3 py-1.5 text-xs text-zinc-900 outline-none focus:border-violet-500 focus:bg-white"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-3">
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-3">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800"
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveData}
                 disabled={isSaving}
-                className="rounded-lg bg-violet-600 px-4 py-1.5 text-xs font-medium text-white transition-all hover:bg-violet-500 disabled:opacity-50"
+                className="rounded-lg bg-violet-600 px-4 py-1.5 text-xs font-medium text-white transition-all hover:bg-violet-500 disabled:opacity-50 shadow-sm shadow-violet-500/20"
               >
                 {isSaving ? "Saving..." : "Save & Commit"}
               </button>
