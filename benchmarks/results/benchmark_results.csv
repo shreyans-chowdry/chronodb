@@ -1,0 +1,9 @@
+engine,workload,total_ops,duration_s,throughput_ops_s,latency_p50_ms,latency_p95_ms,latency_p99_ms,storage_bytes,read_ops,write_ops,branch_ops,merge_ops,errors
+ChronoDB,read_heavy,500,0.386,1295.29,0.788,1.5829,1.6786,806186,405,74,21,0,0
+SQLite,read_heavy,500,0.0233,21438.98,0.0366,0.155,0.1706,2422568,387,82,31,0,0
+ChronoDB,write_heavy,500,0.7809,640.31,0.7845,7.5213,10.0321,3135247,100,345,31,0,0
+SQLite,write_heavy,500,0.0373,13386.91,0.0642,0.1514,0.1807,4263512,85,361,26,0,0
+ChronoDB,branch_heavy,500,0.7802,640.82,0.5657,6.8057,14.1911,1806729,149,156,142,53,1
+SQLite,branch_heavy,500,0.0397,12605.85,0.0721,0.16,0.1719,4189664,143,163,153,41,1
+ChronoDB,merge_heavy,500,1.132,441.71,0.4568,14.664,24.0393,1680081,114,130,106,150,44
+SQLite,merge_heavy,500,0.0384,13012.6,0.0725,0.1589,0.1672,4218504,114,162,105,119,17
