@@ -2,16 +2,6 @@
 
 /* ── Design tokens ── */
 :root {
-  --color-bg: #09090b;
-  --color-surface: #18181b;
-  --color-border: #27272a;
-  --color-text: #fafafa;
-  --color-text-muted: #a1a1aa;
-  --color-accent: #8b5cf6;
-  --color-accent-glow: rgba(139, 92, 246, 0.15);
-}
-
-html:not(.dark) {
   --color-bg: #f8fafc;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
@@ -23,7 +13,7 @@ html:not(.dark) {
 
 /* ── Base ── */
 html {
-  color-scheme: dark light;
+  color-scheme: light;
 }
 
 body {

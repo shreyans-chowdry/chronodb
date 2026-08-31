@@ -57,10 +57,10 @@ export default function BranchSwitcher({
       {/* Branch selector button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-lg border border-zinc-700/50 bg-zinc-800/60 px-3 py-2 text-sm font-medium text-zinc-200 backdrop-blur-sm transition-all hover:border-violet-500/40 hover:bg-zinc-700/60"
+        className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 transition-all hover:border-violet-400 hover:bg-zinc-100 shadow-xs"
       >
         {/* Git branch icon */}
-        <svg className="h-4 w-4 text-violet-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+        <svg className="h-4 w-4 text-violet-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12m0 0a3 3 0 1 0 3 3M6 15a3 3 0 0 1 3 3m0 0h6a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H9a3 3 0 0 0-3 3v6" />
         </svg>
         <span>{activeBranch}</span>
@@ -71,8 +71,8 @@ export default function BranchSwitcher({
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute left-0 top-full z-50 mt-1.5 w-64 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900/95 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="border-b border-zinc-700/50 px-3 py-2">
+        <div className="absolute left-0 top-full z-50 mt-1.5 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+          <div className="border-b border-zinc-200 bg-zinc-50/80 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
               Branches
             </p>
@@ -84,8 +84,8 @@ export default function BranchSwitcher({
                 onClick={() => handleSwitch(b.name)}
                 className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                   b.name === activeBranch
-                    ? "bg-violet-500/10 text-violet-300"
-                    : "text-zinc-300 hover:bg-zinc-800/80 hover:text-zinc-100"
+                    ? "bg-violet-50 font-semibold text-violet-800"
+                    : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
                 }`}
               >
                 <span className="flex-1 truncate">{b.name}</span>
@@ -97,11 +97,11 @@ export default function BranchSwitcher({
           </div>
 
           {/* Create branch */}
-          <div className="border-t border-zinc-700/50 p-2">
+          <div className="border-t border-zinc-200 bg-zinc-50/40 p-2">
             {!showCreate ? (
               <button
                 onClick={() => setShowCreate(true)}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-800/80 hover:text-zinc-200"
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
               >
                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -116,14 +116,14 @@ export default function BranchSwitcher({
                   onChange={(e) => setNewBranchName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleCreate()}
                   placeholder="branch-name"
-                  className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/80 px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
                   autoFocus
                 />
                 <div className="flex gap-1.5">
                   <button
                     onClick={handleCreate}
                     disabled={creating || !newBranchName.trim()}
-                    className="flex-1 rounded-lg bg-violet-600/80 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-violet-600 disabled:opacity-40 active:scale-95"
+                    className="flex-1 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-violet-500 disabled:opacity-40 active:scale-95"
                   >
                     {creating ? "Creating…" : "Create"}
                   </button>
@@ -133,13 +133,13 @@ export default function BranchSwitcher({
                       setNewBranchName("");
                       setError(null);
                     }}
-                    className="rounded-lg px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+                    className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
                   >
                     Cancel
                   </button>
                 </div>
                 {error && (
-                  <p className="text-xs text-red-400">{error}</p>
+                  <p className="text-xs text-red-500">{error}</p>
                 )}
               </div>
             )}

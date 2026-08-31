@@ -23,10 +23,14 @@ async def list_branches(engine: VersionEngine = Depends(get_engine)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{name}/checkout")
-async def checkout_branch(name: str, engine: VersionEngine = Depends(get_engine)):
+@router.post("/checkout")
+@router.post("/{name:path}/checkout")
+async def checkout_branch(name: str = "", branch_name: str = "", engine: VersionEngine = Depends(get_engine)):
+    target = name or branch_name
+    if not target:
+        raise HTTPException(status_code=400, detail="Branch name is required")
     try:
-        current = engine.checkout(branch_name=name)
+        current = engine.checkout(branch_name=target)
         return {"checked_out_branch": current}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
