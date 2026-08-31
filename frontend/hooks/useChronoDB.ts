@@ -5,10 +5,12 @@ import {
   Branch,
   Commit,
   TableRow,
+  CommitGraphResponse,
   fetchBranches,
   fetchCommits,
   fetchTables,
   fetchTableData,
+  fetchCommitGraph,
 } from "@/lib/api";
 
 // ── Generic async data hook ──
@@ -86,5 +88,11 @@ export function useTableData(branchName: string, tableName: string | null) {
         ? fetchTableData(branchName, tableName)
         : Promise.resolve([]),
     [branchName, tableName]
+  );
+}
+
+export function useCommitGraph() {
+  return useAsync<CommitGraphResponse>(
+    () => fetchCommitGraph()
   );
 }
