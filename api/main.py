@@ -7,11 +7,11 @@ from api.routes import branches, commits, query, merge
 
 app = FastAPI(title="ChronoDB API")
 
-# CORS — allow the Next.js frontend dev server
+# CORS — allow Next.js dev server and any local network origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -20,6 +20,16 @@ app.include_router(branches.router)
 app.include_router(commits.router)
 app.include_router(query.router)
 app.include_router(merge.router)
+
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "service": "ChronoDB API Server",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "endpoints": ["/branches", "/commits", "/tables", "/data/{table_name}", "/diff", "/merge"]
+    }
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):

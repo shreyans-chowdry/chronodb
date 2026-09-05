@@ -13,7 +13,7 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from workload import random_row_data, random_string
+from workload import random_row_data, random_string  # type: ignore
 
 
 class BenchmarkAdapter(ABC):
@@ -73,7 +73,7 @@ class ChronoDBAdapter(BenchmarkAdapter):
     """Adapter for the ChronoDB version engine."""
 
     def __init__(self):
-        self.engine = None
+        self.engine: Any = None
         self.db_path = ""
         self._row_counter = 0
         self._branch_counter = 0
@@ -206,7 +206,7 @@ class SQLiteAdapter(BenchmarkAdapter):
     """
 
     def __init__(self):
-        self.conn: Optional[sqlite3.Connection] = None
+        self.conn: Any = None
         self.db_path = ""
         self._row_counter = 0
         self._commit_counter = 0

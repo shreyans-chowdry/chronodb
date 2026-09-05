@@ -82,6 +82,11 @@ class VersionEngine:
         else:
             self.catalog = SystemCatalog(self.pool, 0)
             self.btree = BTreeIndex(self.pool, 1)
+            
+            if self.catalog.commits:
+                max_txn = max(self.catalog.commits.keys())
+                if self.wal._next_txn_id <= max_txn:
+                    self.wal._next_txn_id = max_txn + 1
 
         self._current_branch = "main"
 
@@ -94,17 +99,44 @@ class VersionEngine:
     # Branch operations
     # ──────────────────────────────────────────────
 
-    def branch(self, name: str, source_branch: str = "main") -> Dict[str, Any]:
-        source = self.catalog.get_branch(source_branch)
-        if source is None:
-            raise ValueError(f"Source branch '{source_branch}' does not exist")
-
+    def branch(self, name: str, source_branch: Optional[str] = "main", pull_from_main: bool = True) -> Dict[str, Any]:
         if self.catalog.get_branch(name) is not None:
             raise ValueError(f"Branch '{name}' already exists")
 
-        self.catalog.add_branch(name, source["head_commit_id"])
+        if pull_from_main and source_branch:
+            source = self.catalog.get_branch(source_branch)
+            if source is None:
+                raise ValueError(f"Source branch '{source_branch}' does not exist")
+            
+            # O(1) branching: point to source's head
+            self.catalog.add_branch(name, source["head_commit_id"])
+            
+            # Create a "Pulled from" commit so it shows in this branch's history
+            self.commit(
+                branch_name=name,
+                message=f"Pulled state from {source_branch}",
+                author="system",
+                changes=None
+            )
+        else:
+            # Create a completely empty branch with a new root commit
+            initial_txn = self.wal.allocate_txn_id()
+            now = time.time()
+            commit_hash = _compute_hash(str(None), str(None), name, f"Initial commit for {name}", str(now), "system")
+            
+            self.catalog.add_commit(initial_txn, {
+                "id": initial_txn,
+                "hash": commit_hash,
+                "parent_id": None,
+                "second_parent_id": None,
+                "branch_id": name,
+                "message": f"Initial commit for {name}",
+                "timestamp": now,
+                "author": "system"
+            })
+            self.catalog.add_branch(name, initial_txn)
         
-        # Return dict matching old schema
+        # Return dict matching schema
         branch = self.catalog.get_branch(name)
         return {"id": name, "name": branch["name"], "head_commit_id": branch["head_commit_id"]} # type: ignore
 
@@ -215,7 +247,9 @@ class VersionEngine:
             commit = self.catalog.get_commit(current_id)
             if commit is None:
                 break
-            history.append(commit)
+            # Strictly filter to show ONLY commits made on this branch
+            if commit["branch_id"] == branch_name:
+                history.append(commit)
             current_id = commit["parent_id"]
 
         return history

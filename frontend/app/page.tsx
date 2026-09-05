@@ -6,6 +6,7 @@ import { useBranches, useCommits } from "@/hooks/useChronoDB";
 
 import BranchSwitcher from "@/components/BranchSwitcher";
 import TableViewer from "@/components/TableViewer";
+import SQLEditor from "@/components/SQLEditor";
 import CommitPanel from "@/components/CommitPanel";
 import CommitHistory from "@/components/CommitHistory";
 
@@ -15,6 +16,7 @@ export default function DashboardPage() {
   const [activeBranch, setActiveBranch] = useState("main");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState<"data" | "sql">("data");
 
   const {
     data: branches,
@@ -127,13 +129,44 @@ export default function DashboardPage() {
 
         {/* Right panel: table viewer + commit form */}
         <div className="flex min-w-0 flex-1 flex-col gap-4 animate-slide-up">
-          {/* Table viewer */}
-          <div className="min-h-[300px] flex-1" key={`table-${activeBranch}-${refreshKey}`}>
-            <TableViewer
-              branchName={activeBranch}
-              selectedTable={selectedTable}
-              onSelectTable={setSelectedTable}
-            />
+          {/* Tabs */}
+          <div className="flex items-center gap-2 border-b border-zinc-200/60 pb-2">
+            <button
+              onClick={() => setActiveTab("data")}
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                activeTab === "data"
+                  ? "bg-violet-100 text-violet-800"
+                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              }`}
+            >
+              Data Viewer
+            </button>
+            <button
+              onClick={() => setActiveTab("sql")}
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+                activeTab === "sql"
+                  ? "bg-violet-100 text-violet-800"
+                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              }`}
+            >
+              SQL Runner
+            </button>
+          </div>
+
+          {/* Table viewer or SQL Runner */}
+          <div className="min-h-[300px] flex-1" key={`view-${activeBranch}-${refreshKey}`}>
+            {activeTab === "data" ? (
+              <TableViewer
+                branchName={activeBranch}
+                selectedTable={selectedTable}
+                onSelectTable={setSelectedTable}
+              />
+            ) : (
+              <SQLEditor
+                branchName={activeBranch}
+                onSuccess={triggerRefresh}
+              />
+            )}
           </div>
 
           {/* Commit panel */}

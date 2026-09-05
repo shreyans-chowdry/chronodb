@@ -105,13 +105,13 @@ class TestGCOrphanedBranch:
         report = engine.gc()
 
         # Feature had 2 unique commits
-        assert report.orphaned_commits == 2
+        assert report.orphaned_commits == 3
         assert report.pages_reclaimed >= 2  # at least 2 data pages
-        assert report.commits_removed == 2
+        assert report.commits_removed == 3
 
         # Commits should be removed from catalog
         commits_after = len(engine.catalog.commits)
-        assert commits_after == commits_before - 2
+        assert commits_after == commits_before - 3
 
     def test_reachable_data_intact_after_gc(self, engine):
         """After GC, main branch data must be 100% intact."""
@@ -177,8 +177,8 @@ class TestGCOrphanedBranch:
         report = engine.gc()
 
         # Only the feature-only commit should be orphaned, not the base
-        assert report.orphaned_commits == 1
-        assert report.commits_removed == 1
+        assert report.orphaned_commits == 2
+        assert report.commits_removed == 2
 
         # c0 and the initial commit are still reachable through main
         assert c0["id"] in engine.catalog.commits
@@ -200,7 +200,7 @@ class TestGCIdempotent:
         engine.delete_branch("ephemeral")
 
         report1 = engine.gc()
-        assert report1.orphaned_commits == 1
+        assert report1.orphaned_commits == 2
 
         report2 = engine.gc()
         assert report2.orphaned_commits == 0
@@ -282,8 +282,8 @@ class TestGCMultipleBranches:
         engine.delete_branch("branch-c")
 
         report = engine.gc()
-        assert report.orphaned_commits == 3
-        assert report.commits_removed == 3
+        assert report.orphaned_commits == 6
+        assert report.commits_removed == 6
         assert report.pages_reclaimed >= 3
 
 
@@ -316,5 +316,5 @@ class TestDeleteBranchEdgeCases:
         engine.delete_branch("empty-branch")
         report = engine.gc()
 
-        assert report.orphaned_commits == 0
+        assert report.orphaned_commits == 1
         assert report.pages_reclaimed == 0

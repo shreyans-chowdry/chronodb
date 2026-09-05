@@ -155,7 +155,10 @@ class TestBranch:
         """New branch should point to the same HEAD commit as the source."""
         commit = engine.commit("main", "Commit on main", "author")
         new_branch = engine.branch("feature-x", source_branch="main")
-        assert new_branch["head_commit_id"] == commit["id"]
+        # Branch points to a NEW commit (Pulled state) which points to source head
+        assert new_branch["head_commit_id"] != commit["id"]
+        pulled_commit = engine.catalog.get_commit(new_branch["head_commit_id"])
+        assert pulled_commit["parent_id"] == commit["id"]
 
     def test_branch_duplicate_name_raises(self, engine):
         """Creating a branch with an existing name should raise ValueError."""
@@ -337,10 +340,8 @@ class TestCommitHistory:
         feature_history = engine.get_commit_history("feature")
         messages = [c["message"] for c in feature_history]
 
-        assert "Feature commit" in messages
-        assert "Main commit" in messages
-        assert "Initial commit" in messages
-
+        assert "Main commit" not in messages # History is isolated!
+        assert "Pulled state from main" in messages
     def test_history_limit(self, engine):
         """History should respect the limit parameter."""
         for i in range(10):

@@ -8,7 +8,11 @@ router = APIRouter(prefix="/branches", tags=["branches"])
 @router.post("")
 async def create_branch(branch: BranchCreate, engine: VersionEngine = Depends(get_engine)):
     try:
-        result = engine.branch(name=branch.name, source_branch=branch.source_branch)
+        result = engine.branch(
+            name=branch.name,
+            source_branch=branch.source_branch,
+            pull_from_main=branch.pull_from_main
+        )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

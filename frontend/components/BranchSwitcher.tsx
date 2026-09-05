@@ -23,18 +23,20 @@ export default function BranchSwitcher({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [pullFromSource, setPullFromSource] = useState(false);
 
   async function handleCreate() {
     if (!newBranchName.trim()) return;
     setCreating(true);
     setError(null);
     try {
-      await createBranch(newBranchName.trim(), activeBranch);
+      await createBranch(newBranchName.trim(), activeBranch, pullFromSource);
       await checkoutBranch(newBranchName.trim());
       onBranchChange(newBranchName.trim());
       onRefresh();
       setNewBranchName("");
       setShowCreate(false);
+      setPullFromSource(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create branch");
     } finally {
@@ -52,6 +54,8 @@ export default function BranchSwitcher({
     }
   }
 
+
+
   return (
     <div className="relative">
       {/* Branch selector button */}
@@ -68,6 +72,7 @@ export default function BranchSwitcher({
           <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
         </svg>
       </button>
+
 
       {/* Dropdown */}
       {isOpen && (
@@ -131,6 +136,7 @@ export default function BranchSwitcher({
                     onClick={() => {
                       setShowCreate(false);
                       setNewBranchName("");
+                      setPullFromSource(false);
                       setError(null);
                     }}
                     className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
@@ -138,6 +144,15 @@ export default function BranchSwitcher({
                     Cancel
                   </button>
                 </div>
+                <label className="flex items-center gap-2 px-1 pt-1 text-xs text-zinc-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pullFromSource}
+                    onChange={(e) => setPullFromSource(e.target.checked)}
+                    className="rounded border-zinc-300 text-violet-600 focus:ring-violet-500/30"
+                  />
+                  Pull current data from <strong>{activeBranch}</strong>
+                </label>
                 {error && (
                   <p className="text-xs text-red-500">{error}</p>
                 )}

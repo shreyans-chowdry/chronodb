@@ -110,7 +110,7 @@ export default function CommitHistory({
                 const isInitial = commit.message === "Initial commit" || commit.parent_id === null;
 
                 return (
-                  <div key={commit.id} className="group relative flex gap-3 rounded-lg p-2 transition-colors hover:bg-zinc-50/30 hover:dark:bg-zinc-800/30">
+                  <div key={commit.hash} className="group relative flex gap-3 rounded-lg p-2 transition-colors hover:bg-zinc-50/30 hover:dark:bg-zinc-800/30">
                     {/* Timeline dot */}
                     <div className="relative z-10 mt-1.5 flex-shrink-0">
                       <div

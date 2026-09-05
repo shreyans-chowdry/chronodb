@@ -3,7 +3,8 @@ from typing import Optional, Dict, Any, List
 
 class BranchCreate(BaseModel):
     name: str = Field(..., description="Name of the new branch")
-    source_branch: str = Field("main", description="Name of the source branch")
+    source_branch: Optional[str] = Field("main", description="Name of the source branch")
+    pull_from_main: bool = Field(False, description="Whether to pull current state from source_branch")
 
 class BranchCheckout(BaseModel):
     name: str = Field(..., description="Name of the branch to checkout")

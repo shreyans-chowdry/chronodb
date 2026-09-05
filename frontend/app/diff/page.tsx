@@ -164,28 +164,40 @@ export default function DiffPage() {
             </div>
           </div>
 
-          {/* Mode toggle */}
-          <div className="flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 shadow-xs">
-            <button
-              onClick={() => setViewMode("diff")}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                viewMode === "diff"
-                  ? "bg-white text-violet-700 shadow-xs font-semibold"
-                  : "text-zinc-600 hover:text-zinc-900"
-              }`}
+          {/* Right: Branch Graph link & Mode toggle */}
+          <div className="flex items-center gap-3">
+            <Link
+              href="/graph"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200/60 bg-zinc-50/50 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600"
             >
-              Diff View
-            </button>
-            <button
-              onClick={() => setViewMode("merge")}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                viewMode === "merge"
-                  ? "bg-white text-violet-700 shadow-xs font-semibold"
-                  : "text-zinc-600 hover:text-zinc-900"
-              }`}
-            >
-              Merge
-            </button>
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Z" />
+              </svg>
+              Branch Graph
+            </Link>
+
+            <div className="flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 shadow-xs">
+              <button
+                onClick={() => setViewMode("diff")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                  viewMode === "diff"
+                    ? "bg-white text-violet-700 shadow-xs font-semibold"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Diff View
+              </button>
+              <button
+                onClick={() => setViewMode("merge")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                  viewMode === "merge"
+                    ? "bg-white text-violet-700 shadow-xs font-semibold"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Merge
+              </button>
+            </div>
           </div>
         </div>
       </header>

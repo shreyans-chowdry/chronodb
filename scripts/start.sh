@@ -23,7 +23,6 @@ cleanup() {
     echo ""
     echo "🛑 Shutting down ChronoDB servers..."
     kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
     echo "✅ Shutdown complete."
     exit 0
 }
@@ -31,15 +30,15 @@ cleanup() {
 trap cleanup SIGINT SIGTERM EXIT
 
 # 1. Start FastAPI Backend (Port 8000)
-echo "⚡ Starting FastAPI Backend on http://localhost:8000..."
+echo "⚡ Starting FastAPI Backend on http://localhost:8000 (and http://0.0.0.0:8000)..."
 export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
-python3 -m uvicorn api.main:app --port 8000 --reload &
+python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
 # 2. Start Next.js Frontend (Port 3000)
 echo "🌐 Starting Next.js Frontend on http://localhost:3000..."
 cd "$ROOT_DIR/frontend"
-npm run dev &
+npx next dev -H 0.0.0.0 -p 3000 &
 FRONTEND_PID=$!
 
 cd "$ROOT_DIR"
