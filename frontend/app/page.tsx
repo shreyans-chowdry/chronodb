@@ -87,8 +87,17 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Right: nav (Diff & Merge link) */}
+          {/* Right: nav (Diff & Merge + Branch Graph links) */}
           <div className="flex items-center gap-2">
+            <Link
+              href="/graph"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200/50 dark:border-zinc-700/40 bg-zinc-50/50 dark:bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Z" />
+              </svg>
+              Branch Graph
+            </Link>
             <Link
               href="/diff"
               className="flex items-center gap-1.5 rounded-lg border border-zinc-200/50 dark:border-zinc-700/40 bg-zinc-50/50 dark:bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"

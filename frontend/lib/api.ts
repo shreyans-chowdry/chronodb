@@ -226,3 +226,13 @@ export async function executeMerge(
   });
 }
 
+// ── Commit Graph (all branches) ──
+
+export interface CommitGraphResponse {
+  commits: Commit[];
+  branches: Branch[];
+}
+
+export async function fetchCommitGraph(): Promise<CommitGraphResponse> {
+  return apiFetch<CommitGraphResponse>("/commits/graph");
+}

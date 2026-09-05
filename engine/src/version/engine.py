@@ -254,6 +254,10 @@ class VersionEngine:
 
         return history
 
+    def get_all_commits(self) -> List[Dict[str, Any]]:
+        """Return all commits across all branches (for graph visualization)."""
+        return list(self.catalog.commits.values())
+
     # ──────────────────────────────────────────────
     # Rollback
     # ──────────────────────────────────────────────
