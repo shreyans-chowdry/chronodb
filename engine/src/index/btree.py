@@ -112,7 +112,8 @@ class BTreeIndex:
             self._unpin_node_clean(leaf.page_id) # For the initial find_leaf fetch
             
             # Re-fetch clean node, perform split
-            leaf_clean = self._fetch_node(leaf.page_id) # type: ignore
+            leaf_clean = self._fetch_node(leaf.page_id)
+            assert isinstance(leaf_clean, BTreeLeafNode)
             
             # Add the entry in memory again
             leaf_clean.append_version(key, commit_id, page_version_id)

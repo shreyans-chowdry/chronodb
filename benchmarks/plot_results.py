@@ -278,7 +278,7 @@ def plot_dashboard(rows: List[Dict], output_dir: str) -> str:
     ax4.set_xticklabels(wl_labels, fontsize=9)
     ax4.set_ylim(bottom=0)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     path = os.path.join(output_dir, "benchmark_dashboard.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)

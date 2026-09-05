@@ -23,28 +23,12 @@ for p in (root_dir, engine_dir, src_dir):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-try:
-    from engine.src.wal.log_record import LogRecord, LogRecordType
-    from engine.src.wal.wal_manager import WALManager
-    from engine.src.wal.recovery import RecoveryManager
-    from engine.src.storage.page import PAGE_SIZE
-    from engine.src.storage.disk_manager import DiskManager
-    from engine.src.storage.buffer_pool import BufferPoolManager
-except ImportError:
-    try:
-        from src.wal.log_record import LogRecord, LogRecordType  # type: ignore # pyright: ignore
-        from src.wal.wal_manager import WALManager  # type: ignore # pyright: ignore
-        from src.wal.recovery import RecoveryManager  # type: ignore # pyright: ignore
-        from src.storage.page import PAGE_SIZE  # type: ignore # pyright: ignore
-        from src.storage.disk_manager import DiskManager  # type: ignore # pyright: ignore
-        from src.storage.buffer_pool import BufferPoolManager  # type: ignore # pyright: ignore
-    except ImportError:
-        from wal.log_record import LogRecord, LogRecordType  # type: ignore # pyright: ignore
-        from wal.wal_manager import WALManager  # type: ignore # pyright: ignore
-        from wal.recovery import RecoveryManager  # type: ignore # pyright: ignore
-        from storage.page import PAGE_SIZE  # type: ignore # pyright: ignore
-        from storage.disk_manager import DiskManager  # type: ignore # pyright: ignore
-        from storage.buffer_pool import BufferPoolManager  # type: ignore # pyright: ignore
+from engine.src.wal.log_record import LogRecord, LogRecordType
+from engine.src.wal.wal_manager import WALManager
+from engine.src.wal.recovery import RecoveryManager
+from engine.src.storage.page import PAGE_SIZE
+from engine.src.storage.disk_manager import DiskManager
+from engine.src.storage.buffer_pool import BufferPoolManager
 
 
 # ──────────────────────────────────────────────
@@ -134,6 +118,7 @@ class TestLogRecordSerialization:
         assert restored.txn_id == 7
         assert restored.record_type == LogRecordType.UPDATE
         assert restored.page_id == 42
+        assert restored.after_image is not None
         assert restored.after_image[:12] == b"ChronoDB_WAL"
         assert len(restored.after_image) == PAGE_SIZE
 

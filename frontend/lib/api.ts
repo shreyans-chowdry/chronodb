@@ -1,7 +1,9 @@
-// ChronoDB API Client — typed fetch wrapper
-// Base URL from environment, with fallback for local development
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function getApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  return "/api";
+}
 
 // ── Types ──
 
@@ -41,7 +43,7 @@ async function apiFetch<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
-  const url = `${API_BASE}${path}`;
+  const url = `${getApiBase()}${path}`;
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
     ...options,
@@ -66,11 +68,12 @@ export async function fetchBranches(): Promise<Branch[]> {
 
 export async function createBranch(
   name: string,
-  sourceBranch: string = "main"
+  sourceBranch: string = "main",
+  pullFromMain: boolean = false
 ): Promise<Branch> {
   return apiFetch<Branch>("/branches", {
     method: "POST",
-    body: JSON.stringify({ name, source_branch: sourceBranch }),
+    body: JSON.stringify({ name, source_branch: sourceBranch, pull_from_main: pullFromMain }),
   });
 }
 
