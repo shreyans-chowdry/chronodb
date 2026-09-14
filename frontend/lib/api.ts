@@ -2,8 +2,12 @@ function getApiBase(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  return "/api";
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") {
+    return "/api";
+  }
+  return "https://chronodb-pi.vercel.app";
 }
+
 
 // ── Types ──
 
