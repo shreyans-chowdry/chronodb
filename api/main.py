@@ -16,12 +16,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(branches.router)
-app.include_router(commits.router)
-app.include_router(query.router)
-app.include_router(merge.router)
+from fastapi import APIRouter
+
+api_router = APIRouter()
+api_router.include_router(branches.router)
+api_router.include_router(commits.router)
+api_router.include_router(query.router)
+api_router.include_router(merge.router)
+
+app.include_router(api_router)
+app.include_router(api_router, prefix="/api")
 
 @app.get("/")
+@app.get("/api")
 async def root():
     return {
         "status": "ok",
@@ -30,6 +37,7 @@ async def root():
         "docs": "/docs",
         "endpoints": ["/branches", "/commits", "/tables", "/data/{table_name}", "/diff", "/merge"]
     }
+
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
