@@ -1,0 +1,6 @@
+engine,run,pages_scanned,bytes_before,bytes_after,saved_pct,optimizer_ms,integrity
+original-prototype(main@6b97f09),1,320,62848,30404,51.6,110.77,PASSED
+original-prototype(main@6b97f09),2,320,62857,30237,51.9,103.79,PASSED
+original-prototype(main@6b97f09),3,320,62886,30301,51.8,95.69,PASSED
+original-prototype(main@6b97f09),4,320,62887,30485,51.5,117.61,PASSED
+original-prototype(main@6b97f09),5,320,62839,30361,51.7,91.34,PASSED

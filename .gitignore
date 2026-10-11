@@ -46,3 +46,10 @@ node_modules/
 .next/
 out/
 .env*.local
+
+# ChronoDB data files
+*.db
+*.db.wal
+*.dat
+*.dat.wal
+benchmarks/runs/

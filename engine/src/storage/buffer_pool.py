@@ -67,6 +67,17 @@ class BufferPoolManager:
         # and removed when pinned or evicted.
         self._lru: OrderedDict = OrderedDict()
 
+        # Pages modified since the last durable commit. The version engine
+        # logs their after-images to the WAL at commit time.
+        self.txn_dirty: Set[int] = set()
+        # After-images of txn-dirty pages that were evicted before the commit
+        # was logged; the WAL needs the newest image of every such page.
+        self.txn_evicted: Dict[int, bytes] = {}
+
+        # Callbacks notified with a page_id whenever that page's contents may
+        # change (dirty unpin, allocation, deletion). Used by decoded-node caches.
+        self.write_listeners: List = []
+
     # ──────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────
@@ -130,6 +141,13 @@ class BufferPoolManager:
         # Allocate a new page on disk
         page_id = self.disk_manager.allocate_page()
 
+        # A recycled page may still be cached from an earlier life; drop it.
+        if page_id in self.page_table:
+            old_idx = self.page_table.pop(page_id)
+            self._lru.pop(page_id, None)
+            self.frames[old_idx].reset()
+            self.free_list.append(old_idx)
+
         # Initialize the frame
         page = self.frames[frame_idx]
         page.reset()
@@ -139,6 +157,8 @@ class BufferPoolManager:
 
         # Register in page table
         self.page_table[page_id] = frame_idx
+        for cb in self.write_listeners:
+            cb(page_id)
 
         return page
 
@@ -165,6 +185,9 @@ class BufferPoolManager:
         # until flushed)
         if is_dirty:
             page.is_dirty = True
+            self.txn_dirty.add(page_id)
+            for cb in self.write_listeners:
+                cb(page_id)
 
         # Decrement pin count (floor at 0)
         if page.pin_count <= 0:
@@ -217,6 +240,11 @@ class BufferPoolManager:
         return flushed_count
 
     def delete_page(self, page_id: int) -> bool:
+        for cb in self.write_listeners:
+            cb(page_id)
+        return self._delete_page(page_id)
+
+    def _delete_page(self, page_id: int) -> bool:
         """
         Delete a page from the buffer pool (and deallocate on disk).
 
@@ -229,6 +257,12 @@ class BufferPoolManager:
             True if deleted, False if not found or still pinned.
         """
         if page_id not in self.page_table:
+            # Not cached: nothing to evict, just release it on disk.
+            if 0 <= page_id < self.disk_manager.get_num_pages():
+                self.disk_manager.deallocate_page(page_id)
+                self.txn_dirty.discard(page_id)
+                self.txn_evicted.pop(page_id, None)
+                return True
             return False
 
         frame_idx = self.page_table[page_id]
@@ -241,9 +275,9 @@ class BufferPoolManager:
         if page_id in self._lru:
             del self._lru[page_id]
 
-        # Flush if dirty before deleting
-        if page.is_dirty:
-            self.disk_manager.write_page(page.page_id, page.data)
+        # The page is being discarded, so its contents need not reach disk.
+        self.txn_dirty.discard(page_id)
+        self.txn_evicted.pop(page_id, None)
 
         # Reset the frame and return it to the free list
         page.reset()
@@ -258,6 +292,16 @@ class BufferPoolManager:
     # ──────────────────────────────────────────────
     # Diagnostic / Inspection
     # ──────────────────────────────────────────────
+
+    def page_bytes(self, page_id: int) -> Optional[bytes]:
+        """Newest image of a page: from its frame, or saved at eviction."""
+        if page_id not in self.page_table:
+            return self.txn_evicted.get(page_id)
+        return bytes(self.frames[self.page_table[page_id]].data)
+
+    def clear_txn_tracking(self) -> None:
+        self.txn_dirty.clear()
+        self.txn_evicted.clear()
 
     def get_pin_count(self, page_id: int) -> int:
         """Get the pin count for a page. Returns -1 if not in the pool."""
@@ -318,6 +362,8 @@ class BufferPoolManager:
         # If dirty, flush to disk before evicting
         if page.is_dirty:
             self.disk_manager.write_page(page.page_id, page.data)
+        if evict_page_id in self.txn_dirty:
+            self.txn_evicted[evict_page_id] = bytes(page.data)
 
         # Clean up
         page.reset()

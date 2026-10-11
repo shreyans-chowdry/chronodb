@@ -7,7 +7,7 @@ include = ["engine*", "api*"]
 
 [project]
 name = "chronodb-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "ChronoDB Version Engine MVP"
 authors = [{ name = "ChronoDB Team" }]
 dependencies = [
@@ -23,6 +23,7 @@ minversion = "7.0"
 addopts = "-v"
 testpaths = [
     "engine/tests",
+    "api/tests",
 ]
 pythonpath = [
     "engine",

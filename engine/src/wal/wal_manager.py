@@ -83,6 +83,25 @@ class WALManager:
 
             return record.lsn
 
+    def append_batch(self, records: List[LogRecord]) -> int:
+        """
+        Append several records with a single fsync (group commit). Returns the
+        LSN of the last record.
+        """
+        if not records:
+            return self._next_lsn - 1
+        with self._lock:
+            buf = bytearray()
+            for record in records:
+                record.lsn = self._next_lsn
+                self._next_lsn += 1
+                buf.extend(record.serialize())
+            with open(self.wal_path, "ab") as f:
+                f.write(buf)
+                f.flush()
+                os.fsync(f.fileno())
+            return records[-1].lsn
+
     def read_all(self) -> List[LogRecord]:
         """
         Read all valid log records from the WAL file.

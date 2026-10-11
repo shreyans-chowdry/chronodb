@@ -1,19 +1,36 @@
 """
-ChronoDB Storage Engine — Adaptive Storage Optimizer
+ChronoDB Storage Engine — Storage Optimizer
 
-Background job & on-demand optimizer that identifies "cold" page versions in
-version chains (versions superseded by N or more commits) and converts them
-from full 4KB snapshots to compact delta-encoded pages relative to base snapshots.
+Identifies *cold* versions in each key's version chain and rewrites them as
+deltas against a full-snapshot base.
+
+Policy
+  * A version is cold when at least ``cold_threshold`` newer versions of the
+    same key exist (version age measured in commits to that key). The newest
+    ``cold_threshold`` versions always stay as full snapshots, so recent
+    history reads need no reconstruction.
+  * The base is the oldest live full snapshot in the chain. It is never
+    compressed, so every delta is exactly one hop from a snapshot.
+  * Deltas are packed into shared heap pages (see heap.py) and the 4 KB
+    snapshot page each one replaces is returned to the free list. The
+    optimizer therefore reduces both payload bytes and allocated pages.
+
+The report gives two views of the saving:
+  * payload bytes of the versions that were compressed (bytes_before → bytes_after),
+    the measure used in the original evaluation, and
+  * allocated bytes of the whole database file (live pages × 4 KB).
 """
 
-from dataclasses import dataclass
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from .buffer_pool import BufferPoolManager
+from .delta import compute_delta, is_delta_page, decode_delta_page
+from .heap import DeltaHeap, is_packed_ref, read_packed, record_size
 from .page import PAGE_SIZE, INVALID_PAGE_ID
-from .delta import is_delta_page, encode_delta_page
 from .reader import read_row_data
 
 logger = logging.getLogger("chronodb.optimizer")
@@ -29,8 +46,14 @@ class OptimizerReport:
     bytes_saved: int
     savings_percent: float
     cold_threshold: int
+    keys_scanned: int = 0
+    live_bytes_before: int = 0
+    live_bytes_after: int = 0
+    heap_pages_added: int = 0
+    duration_ms: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        live_saved = max(0, self.live_bytes_before - self.live_bytes_after)
         return {
             "pages_scanned": self.pages_scanned,
             "pages_compressed": self.pages_compressed,
@@ -39,27 +62,46 @@ class OptimizerReport:
             "bytes_saved": self.bytes_saved,
             "savings_percent": round(self.savings_percent, 2),
             "cold_threshold": self.cold_threshold,
+            "keys_scanned": self.keys_scanned,
+            "live_bytes_before": self.live_bytes_before,
+            "live_bytes_after": self.live_bytes_after,
+            "live_bytes_saved": live_saved,
+            "live_savings_percent": round(100.0 * live_saved / self.live_bytes_before, 2) if self.live_bytes_before else 0.0,
+            "heap_pages_added": self.heap_pages_added,
+            "duration_ms": round(self.duration_ms, 2),
         }
 
     def summary(self) -> str:
+        d = self.to_dict()
         return (
             f"Storage Optimizer Summary:\n"
             f"  Cold threshold:      {self.cold_threshold} commits\n"
-            f"  Pages scanned:       {self.pages_scanned}\n"
-            f"  Pages compressed:    {self.pages_compressed}\n"
-            f"  Storage before:      {self.bytes_before:,} bytes\n"
-            f"  Storage after:       {self.bytes_after:,} bytes\n"
-            f"  Storage saved:       {self.bytes_saved:,} bytes ({self.savings_percent:.1f}% reduction)"
+            f"  Versions scanned:    {self.pages_scanned}\n"
+            f"  Versions compressed: {self.pages_compressed}\n"
+            f"  Payload bytes:       {self.bytes_before:,} -> {self.bytes_after:,} "
+            f"({self.savings_percent:.1f}% reduction)\n"
+            f"  Allocated bytes:     {self.live_bytes_before:,} -> {self.live_bytes_after:,} "
+            f"({d['live_savings_percent']:.1f}% reduction)\n"
+            f"  Duration:            {self.duration_ms:.1f} ms"
         )
 
 
+def _snapshot_payload(pool: BufferPoolManager, page_id: int) -> Optional[int]:
+    """Payload length of a full-snapshot page, or None if it is not one."""
+    page = pool.fetch_page(page_id)
+    if not page:
+        return None
+    try:
+        if is_delta_page(page.data) or page.data[0] == 0:
+            return None
+        end = page.data.find(b"\x00")
+        return PAGE_SIZE if end == -1 else end
+    finally:
+        pool.unpin_page(page_id, is_dirty=False)
+
+
 class StorageOptimizer:
-    """
-    Adaptive Storage Optimizer for ChronoDB.
-    
-    Identifies cold versions in primary key version chains and compresses them
-    into forward deltas encoded against their nearest non-cold base ancestor.
-    """
+    """Converts cold full-snapshot versions into packed deltas."""
 
     def __init__(
         self,
@@ -67,162 +109,138 @@ class StorageOptimizer:
         btree: Any,
         pool: BufferPoolManager,
         cold_threshold: int = 5,
+        heap: Optional[DeltaHeap] = None,
     ):
         self.catalog = catalog
         self.btree = btree
         self.pool = pool
         self.cold_threshold = max(1, cold_threshold)
+        self.heap = heap if heap is not None else DeltaHeap(pool, getattr(catalog, "heap_tail", -1))
+
+    def _keys(self) -> List[str]:
+        return [f"{t}:{r}" for t, rows in list(self.catalog.tables.items()) for r in rows]
 
     def optimize(self, cold_threshold: Optional[int] = None) -> OptimizerReport:
-        """
-        Run the storage optimization pass across all registered tables and rows.
-        
-        Args:
-            cold_threshold: Override the default commit age threshold for cold versions.
-            
-        Returns:
-            An OptimizerReport detailing bytes saved and pages compressed.
-        """
-        threshold = cold_threshold if cold_threshold is not None else self.cold_threshold
+        threshold = max(1, cold_threshold if cold_threshold is not None else self.cold_threshold)
+        t0 = time.perf_counter()
+        disk = self.pool.disk_manager
+        live_before = disk.get_num_live_pages() * PAGE_SIZE
+        heap_pages_before = disk.get_num_pages()
 
-        pages_scanned = 0
-        pages_compressed = 0
-        bytes_before = 0
-        bytes_after = 0
+        pages_scanned = pages_compressed = bytes_before = bytes_after = keys_scanned = 0
+        freed: List[int] = []
 
-        for table_name, row_ids in list(self.catalog.tables.items()):
-            for row_id in row_ids:
-                key = f"{table_name}:{row_id}"
-                leaf = self.btree.find_leaf(key)
-                
-                if key not in leaf.entries:
-                    self.btree._unpin_node_clean(leaf.page_id)
+        for key in self._keys():
+            chain = self.btree.get_chain(key)
+            if not chain or len(chain) <= 1:
+                continue
+            keys_scanned += 1
+
+            base_idx = next((i for i, (_, ref) in enumerate(chain)
+                             if ref != INVALID_PAGE_ID and not is_packed_ref(ref)
+                             and _snapshot_payload(self.pool, ref) is not None), -1)
+            if base_idx == -1:
+                continue
+            base_ref = chain[base_idx][1]
+            base_data = read_row_data(self.pool, base_ref)
+            if base_data is None:
+                continue
+
+            cold_boundary = len(chain) - threshold
+            changed = False
+            for i in range(base_idx + 1, cold_boundary):
+                cid, ref = chain[i]
+                if ref == INVALID_PAGE_ID or ref == base_ref:
                     continue
-
-                version_chain = list(leaf.entries[key])
-                self.btree._unpin_node_clean(leaf.page_id)
-
-                # Need at least 2 versions to have a base + delta candidate
-                if len(version_chain) <= 1:
+                pages_scanned += 1
+                if is_packed_ref(ref):
+                    rec = read_packed(self.pool, ref)
+                    sz = record_size(rec[0], rec[1]) if rec else 0
+                    bytes_before += sz
+                    bytes_after += sz
                     continue
-
-                # Identify base ancestor (first non-tombstone version in chain)
-                base_idx = -1
-                for idx, (commit_id, page_id) in enumerate(version_chain):
-                    if page_id != INVALID_PAGE_ID:
-                        base_idx = idx
-                        break
-
-                if base_idx == -1:
-                    continue
-
-                base_commit_id, base_page_id = version_chain[base_idx]
-
-                # Any version at index i < len(version_chain) - threshold is cold
-                cold_boundary = len(version_chain) - threshold
-
-                for i in range(base_idx + 1, cold_boundary):
-                    curr_commit_id, curr_page_id = version_chain[i]
-
-                    if curr_page_id == INVALID_PAGE_ID or curr_page_id == base_page_id:
-                        continue
-
-                    # Fetch page to examine
-                    page = self.pool.fetch_page(curr_page_id)
-                    if not page:
-                        continue
-
-                    pages_scanned += 1
-                    page_used = page._used_bytes()
-                    bytes_before += page_used
-
-                    if is_delta_page(page.data):
-                        # Already compressed
-                        bytes_after += page_used
-                        self.pool.unpin_page(curr_page_id, is_dirty=False)
-                        continue
-
-                    # Unpin page before reading row data to avoid pin deadlocks
-                    self.pool.unpin_page(curr_page_id, is_dirty=False)
-
-                    # Read full row data for base and current version
-                    base_data = read_row_data(self.pool, base_page_id)
-                    curr_data = read_row_data(self.pool, curr_page_id)
-
-                    if base_data is None or curr_data is None:
-                        bytes_after += page_used
-                        continue
-
-                    # Compute and encode delta
-                    delta_bytes = encode_delta_page(base_data, curr_data, base_page_id)
-
-                    # Write delta to page
-                    page = self.pool.fetch_page(curr_page_id)
+                payload = _snapshot_payload(self.pool, ref)
+                if payload is None:
+                    # legacy in-place delta page: count as already compressed
+                    page = self.pool.fetch_page(ref)
+                    used = page._used_bytes() if page else 0
                     if page:
-                        page.data[:] = b"\x00" * PAGE_SIZE
-                        page.data[:len(delta_bytes)] = delta_bytes
-                        new_used = len(delta_bytes)
-                        bytes_after += new_used
-                        pages_compressed += 1
-                        self.pool.unpin_page(curr_page_id, is_dirty=True)
-                    else:
-                        bytes_after += page_used
+                        self.pool.unpin_page(ref, is_dirty=False)
+                    bytes_before += used
+                    bytes_after += used
+                    continue
 
-        # Flush modified pages to disk
-        self.pool.flush_all_pages()
+                curr = read_row_data(self.pool, ref)
+                if curr is None:
+                    bytes_before += payload
+                    bytes_after += payload
+                    continue
+                delta = compute_delta(base_data, curr)
+                new_ref = self.heap.append(base_ref, delta)
+                bytes_before += payload
+                bytes_after += record_size(base_ref, delta)
+                chain[i] = (cid, new_ref)
+                freed.append(ref)
+                pages_compressed += 1
+                changed = True
+
+            if changed:
+                self.btree.set_chain(key, chain)
+
+        for pid in freed:
+            self.pool.delete_page(pid)
+
+        if hasattr(self.catalog, "heap_tail"):
+            self.catalog.heap_tail = self.heap.tail_page_id
+            if hasattr(self.catalog, "mark_dirty"):
+                self.catalog.mark_dirty()
 
         bytes_saved = max(0, bytes_before - bytes_after)
-        savings_percent = (bytes_saved / bytes_before * 100.0) if bytes_before > 0 else 0.0
-
         report = OptimizerReport(
             pages_scanned=pages_scanned,
             pages_compressed=pages_compressed,
             bytes_before=bytes_before,
             bytes_after=bytes_after,
             bytes_saved=bytes_saved,
-            savings_percent=savings_percent,
+            savings_percent=(bytes_saved / bytes_before * 100.0) if bytes_before else 0.0,
             cold_threshold=threshold,
+            keys_scanned=keys_scanned,
+            live_bytes_before=live_before,
+            live_bytes_after=disk.get_num_live_pages() * PAGE_SIZE,
+            heap_pages_added=max(0, disk.get_num_pages() - heap_pages_before),
+            duration_ms=(time.perf_counter() - t0) * 1000.0,
         )
-
         logger.info(report.summary())
         return report
 
     def get_storage_stats(self) -> Dict[str, Any]:
-        """
-        Scan all version chains and return storage statistics.
-        """
-        total_versions = 0
-        full_snapshots = 0
-        deltas = 0
+        """Count versions by representation and sum their payload bytes."""
+        total_versions = full_snapshots = deltas = tombstones = 0
         total_used_bytes = 0
-
-        for table_name, row_ids in self.catalog.tables.items():
-            for row_id in row_ids:
-                key = f"{table_name}:{row_id}"
-                leaf = self.btree.find_leaf(key)
-                if key not in leaf.entries:
-                    self.btree._unpin_node_clean(leaf.page_id)
+        for key in self._keys():
+            for _cid, ref in self.btree.get_chain(key) or []:
+                if ref == INVALID_PAGE_ID:
+                    tombstones += 1
                     continue
-
-                for commit_id, page_id in leaf.entries[key]:
-                    if page_id == INVALID_PAGE_ID:
-                        continue
-                    total_versions += 1
-                    page = self.pool.fetch_page(page_id)
-                    if page:
-                        used = page._used_bytes()
-                        total_used_bytes += used
-                        if is_delta_page(page.data):
-                            deltas += 1
-                        else:
-                            full_snapshots += 1
-                        self.pool.unpin_page(page_id, is_dirty=False)
-
-                self.btree._unpin_node_clean(leaf.page_id)
-
+                total_versions += 1
+                if is_packed_ref(ref):
+                    rec = read_packed(self.pool, ref)
+                    deltas += 1
+                    total_used_bytes += record_size(rec[0], rec[1]) if rec else 0
+                    continue
+                page = self.pool.fetch_page(ref)
+                if not page:
+                    continue
+                total_used_bytes += page._used_bytes()
+                if is_delta_page(page.data):
+                    deltas += 1
+                else:
+                    full_snapshots += 1
+                self.pool.unpin_page(ref, is_dirty=False)
         return {
             "total_versions": total_versions,
             "full_snapshots": full_snapshots,
             "deltas": deltas,
+            "tombstones": tombstones,
             "total_used_bytes": total_used_bytes,
         }

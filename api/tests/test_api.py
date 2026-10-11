@@ -5,11 +5,15 @@ from api.main import app
 
 @pytest.fixture(scope="session", autouse=True)
 def clean_db():
-    if os.path.exists("api_test.db"):
-        os.remove("api_test.db")
+    for f in ("api_test.db", "api_test.db.wal"):
+        if os.path.exists(f):
+            os.remove(f)
     yield
-    if os.path.exists("api_test.db"):
-        os.remove("api_test.db")
+    from api.dependencies import reset_engine
+    reset_engine()
+    for f in ("api_test.db", "api_test.db.wal"):
+        if os.path.exists(f):
+            os.remove(f)
 
 client = TestClient(app)
 
@@ -136,3 +140,48 @@ def test_get_data_nonexistent_branch():
     response = client.get("/data/users", params={"branch_name": "no-such-branch"})
     assert response.status_code == 404
     assert "error" in response.json()
+
+
+# ── Endpoints added in the 2.0 API ──
+
+def test_sql_endpoint_commits_once():
+    r = client.post("/api/sql", json={"sql": "INSERT INTO pets (id, name) VALUES (1, 'Rex'), (2, 'Tom'); SELECT COUNT(*) AS n FROM pets",
+                                      "branch_name": "main", "author": "tester"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["commit"] is not None and body["changes"] == 2
+    assert body["results"][1]["rows"] == [{"n": 2}]
+
+
+def test_sql_syntax_error_is_400():
+    r = client.post("/api/sql", json={"sql": "SELEC * FROM pets"})
+    assert r.status_code == 400
+    assert "Syntax error" in r.json()["error"]["message"]
+
+
+def test_compare_and_merge_preview():
+    client.post("/api/branches", json={"name": "cmp-branch", "source_branch": "main"})
+    client.post("/api/sql", json={"sql": "UPDATE pets SET name = 'Max' WHERE id = 1", "branch_name": "cmp-branch"})
+    r = client.get("/api/compare", params={"base": "main", "head": "cmp-branch"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["merge_preview"]["strategy"] == "fast-forward"
+    assert body["diff"]["tables"]["pets"]["rows"][0]["changed_fields"] == ["name"]
+
+
+def test_commit_detail_row_history_and_stats():
+    log = client.get("/api/commits", params={"branch_name": "main", "mode": "log", "limit": 5}).json()
+    head = log["commits"][0]["hash"]
+    detail = client.get(f"/api/commits/{head}").json()
+    assert "changes" in detail and detail["hash"] == head
+    hist = client.get("/api/rows/pets/1/history", params={"ref": "cmp-branch"}).json()["history"]
+    assert [h["data"]["name"] for h in hist] == ["Max", "Rex"]
+    stats = client.get("/api/stats").json()
+    assert stats["commits"] >= 3 and "storage" in stats
+
+
+def test_maintenance_endpoints():
+    assert client.post("/api/maintenance/optimize", json={"cold_threshold": 1}).status_code == 200
+    assert client.delete("/api/branches/cmp-branch").status_code == 200
+    gc = client.post("/api/maintenance/gc").json()
+    assert "commits_removed" in gc

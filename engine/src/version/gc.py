@@ -25,6 +25,7 @@ class GCReport:
     pages_reclaimed: int
     version_entries_pruned: int
     commits_removed: int
+    versions_rehydrated: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -33,6 +34,7 @@ class GCReport:
             "pages_reclaimed": self.pages_reclaimed,
             "version_entries_pruned": self.version_entries_pruned,
             "commits_removed": self.commits_removed,
+            "versions_rehydrated": self.versions_rehydrated,
         }
 
     def summary(self) -> str:
@@ -54,10 +56,12 @@ class GarbageCollector:
     page versions from the B+ Tree and deallocates the underlying disk pages.
     """
 
-    def __init__(self, catalog: Any, btree: Any, pool: Any):
+    def __init__(self, catalog: Any, btree: Any, pool: Any, heap: Any = None):
         self.catalog = catalog
         self.btree = btree
         self.pool = pool
+        self.heap = heap
+        self.versions_rehydrated = 0
 
     # ────────────────────────────────────────────────
     # Public API
@@ -95,6 +99,7 @@ class GarbageCollector:
             pages_reclaimed=pages_reclaimed,
             version_entries_pruned=entries_pruned,
             commits_removed=commits_removed,
+            versions_rehydrated=self.versions_rehydrated,
         )
 
         logger.info(report.summary())
@@ -112,11 +117,13 @@ class GarbageCollector:
         reachable: Set[int] = set()
         queue: List[int] = []
 
-        # Seed the BFS with every branch HEAD
+        # Seed the BFS with every branch HEAD and every tagged commit
         for branch_name, branch_data in self.catalog.branches.items():
             head_id = branch_data.get("head_commit_id")
             if head_id is not None:
                 queue.append(head_id)
+        for tag in getattr(self.catalog, "tags", {}).values():
+            queue.append(tag.get("commit_id"))
 
         while queue:
             commit_id = queue.pop(0)
@@ -146,54 +153,95 @@ class GarbageCollector:
 
     def _sweep(self, orphaned: Set[int]) -> Tuple[int, int]:
         """
-        Walk every key's version chain in the B+ Tree.
-        Remove entries whose commit_id is in the orphaned set.
-        Deallocate the page versions from those entries.
+        Remove orphaned versions from every version chain and release their
+        storage.
+
+        Delta-encoded versions point at a base snapshot. If a surviving delta's
+        base is about to be reclaimed, the delta is first rewritten as a full
+        snapshot ("rehydrated") so no live version loses its base.
 
         Returns (pages_reclaimed, entries_pruned).
         """
+        import json as _json
         from ..storage.page import INVALID_PAGE_ID
+        from ..storage.heap import is_packed_ref, read_packed
+        from ..storage.delta import is_delta_page, decode_delta_page
+        from ..storage.reader import read_row_data
+
+        entries_pruned = 0
+        doomed_pages: Set[int] = set()
+        doomed_refs: Set[int] = set()
+        new_chains: Dict[str, list] = {}
+
+        keys = [f"{t}:{r}" for t, rows in self.catalog.tables.items() for r in rows]
+        for key in keys:
+            chain = self.btree.get_chain(key)
+            if not chain:
+                continue
+            surviving = []
+            for commit_id, ref in chain:
+                if commit_id in orphaned:
+                    entries_pruned += 1
+                    if is_packed_ref(ref):
+                        doomed_refs.add(ref)
+                    elif ref != INVALID_PAGE_ID:
+                        doomed_pages.add(ref)
+                else:
+                    surviving.append((commit_id, ref))
+            if len(surviving) != len(chain):
+                new_chains[key] = surviving
+
+        def base_of(ref: int) -> Optional[int]:
+            if is_packed_ref(ref):
+                rec = read_packed(self.pool, ref)
+                return rec[0] if rec else None
+            page = self.pool.fetch_page(ref)
+            if not page:
+                return None
+            try:
+                if is_delta_page(page.data):
+                    return decode_delta_page(page.data)[0]
+                return None
+            finally:
+                self.pool.unpin_page(ref, is_dirty=False)
+
+        # Rehydrate survivors whose base snapshot is being reclaimed
+        if doomed_pages:
+            for key in keys:
+                chain = list(new_chains[key]) if key in new_chains else (self.btree.get_chain(key) or [])
+                changed = False
+                for i, (cid, ref) in enumerate(chain):
+                    if ref == INVALID_PAGE_ID:
+                        continue
+                    b = base_of(ref)
+                    if b is not None and b in doomed_pages:
+                        data = read_row_data(self.pool, ref)
+                        page = self.pool.new_page()
+                        if not page or data is None:
+                            raise RuntimeError("GC could not rehydrate a delta version")
+                        raw = _json.dumps(data).encode("utf-8")
+                        page.data[: len(raw)] = raw
+                        self.pool.unpin_page(page.page_id, is_dirty=True)
+                        if is_packed_ref(ref):
+                            doomed_refs.add(ref)
+                        else:
+                            doomed_pages.add(ref)
+                        chain[i] = (cid, page.page_id)
+                        changed = True
+                        self.versions_rehydrated += 1
+                if changed:
+                    new_chains[key] = chain
+
+        for key, chain in new_chains.items():
+            self.btree.set_chain(key, chain)
 
         pages_reclaimed = 0
-        entries_pruned = 0
-        pages_to_reclaim: Set[int] = set()
-
-        for table_name, row_ids in list(self.catalog.tables.items()):
-            for row_id in row_ids:
-                key = f"{table_name}:{row_id}"
-                leaf = self.btree.find_leaf(key)
-
-                if key not in leaf.entries:
-                    self.btree._unpin_node_clean(leaf.page_id)
-                    continue
-
-                version_chain = leaf.entries[key]
-                original_len = len(version_chain)
-
-                # Separate: keep reachable versions, collect orphaned page_ids
-                surviving = []
-                for commit_id, page_version_id in version_chain:
-                    if commit_id in orphaned:
-                        # Mark page for reclamation
-                        if page_version_id != INVALID_PAGE_ID:
-                            pages_to_reclaim.add(page_version_id)
-                        entries_pruned += 1
-                    else:
-                        surviving.append((commit_id, page_version_id))
-
-                if len(surviving) != original_len:
-                    # Version chain was modified — update it
-                    leaf.entries[key] = surviving
-                    self.btree._save_node(leaf)
-                else:
-                    self.btree._unpin_node_clean(leaf.page_id)
-
-        # Reclaim disk pages
-        for page_id in pages_to_reclaim:
-            self.pool.delete_page(page_id)
-            pages_reclaimed += 1
-
-        # Flush to ensure everything is persisted
-        self.pool.flush_all_pages()
+        for pid in doomed_pages:
+            if self.pool.delete_page(pid):
+                pages_reclaimed += 1
+        if self.heap is not None:
+            for ref in doomed_refs:
+                if self.heap.free(ref):
+                    pages_reclaimed += 1
 
         return pages_reclaimed, entries_pruned
