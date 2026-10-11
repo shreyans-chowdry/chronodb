@@ -45,6 +45,16 @@ interface Ctx {
 
 const AppContext = createContext<Ctx | null>(null);
 
+const SYNC_INTERVAL_MS = 8000;
+
+/** Branch names and their head commits; changes whenever the server's history does. */
+function branchSignature(branches: Branch[]): string {
+  return branches
+    .map((b) => `${b.name}@${b.head_hash ?? b.head_commit_id}`)
+    .sort()
+    .join("|");
+}
+
 function readLocal(key: string, fallback: string) {
   try {
     return localStorage.getItem(key) ?? fallback;
@@ -73,6 +83,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [apiDown, setApiDown] = useState<string | null>(null);
   const toastId = useRef(0);
+  const asOfRef = useRef<Commit | null>(null);
+  useEffect(() => {
+    asOfRef.current = asOf;
+  }, [asOf]);
 
   // Restore view from the URL hash and the author from local storage. These
   // exist only in the browser, so they are read after hydration.
@@ -129,6 +143,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setBranches(b.branches);
         setLog(l.commits);
         setLogTotal(l.total);
+        // A commit being viewed can vanish if the database was reset or rebuilt
+        const viewing = asOfRef.current;
+        if (viewing && l.commits.length >= l.total && !l.commits.some((c) => c.id === viewing.id && c.hash === viewing.hash)) {
+          setAsOf(null);
+        }
       })
       .catch((e: Error & { status?: number }) => {
         if (!live) return;
@@ -142,6 +161,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       live = false;
     };
   }, [branch, version, setBranch]);
+
+  // Keep the client in step with the server. The database can change outside
+  // this tab (another tab, a reseed, a test run, a server restart), and the
+  // branch list and log above only reload after this tab's own actions. On
+  // view change, on returning to the tab, and every few seconds while it is
+  // visible, compare the server's branch heads with what we hold and reload
+  // everything if they differ.
+  const signature = useMemo(() => branchSignature(branches), [branches]);
+  const signatureRef = useRef(signature);
+  const apiDownRef = useRef(apiDown);
+  useEffect(() => {
+    signatureRef.current = signature;
+    apiDownRef.current = apiDown;
+  }, [signature, apiDown]);
+  useEffect(() => {
+    let live = true;
+    let inFlight = false;
+    const check = () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      api.branches()
+        .then((b) => {
+          if (!live) return;
+          // API came back after an outage, or the server's history moved on
+          if (apiDownRef.current || branchSignature(b.branches) !== signatureRef.current) refresh();
+        })
+        .catch(() => {
+          /* the main loader reports API outages */
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    // Skip the immediate check on first mount: the main loader is already fetching
+    if (signatureRef.current) check();
+    const timer = window.setInterval(check, SYNC_INTERVAL_MS);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [view, refresh]);
 
   const value = useMemo<Ctx>(
     () => ({

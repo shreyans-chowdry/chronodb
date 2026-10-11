@@ -1,19 +1,8 @@
-import os
-import pytest
 from fastapi.testclient import TestClient
 from api.main import app
 
-@pytest.fixture(scope="session", autouse=True)
-def clean_db():
-    for f in ("api_test.db", "api_test.db.wal"):
-        if os.path.exists(f):
-            os.remove(f)
-    yield
-    from api.dependencies import reset_engine
-    reset_engine()
-    for f in ("api_test.db", "api_test.db.wal"):
-        if os.path.exists(f):
-            os.remove(f)
+# Database isolation lives in conftest.py: tests run against a temp DB,
+# never the demo database (api_test.db) the dashboard uses.
 
 client = TestClient(app)
 
