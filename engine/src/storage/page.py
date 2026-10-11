@@ -51,4 +51,4 @@ class Page:
 
     def _used_bytes(self) -> int:
         """Count non-zero bytes (rough measure of how full the page is)."""
-        return sum(1 for b in self.data if b != 0)
+        return PAGE_SIZE - self.data.count(0)

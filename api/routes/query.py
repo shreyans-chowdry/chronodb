@@ -1,78 +1,85 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
-from api.schemas import QueryRequest
-from api.dependencies import get_engine
-from engine.src.version.engine import VersionEngine
-import sqlite3
 
-router = APIRouter(tags=["query"])
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from api.dependencies import get_engine
+from api.routes._util import call
+from api.schemas import QueryRequest, SQLRequest
+from engine.src.query.sql import parse_timestamp, run_sql
+from engine.src.version.engine import VersionEngine
+
+router = APIRouter(tags=["data"])
+
+
+def _commit_for(engine: VersionEngine, branch_name: str, as_of_commit: Optional[str],
+                as_of_timestamp: Optional[str], ref: Optional[str]) -> int:
+    if as_of_commit:
+        return engine._resolve_commit_id(as_of_commit)
+    if as_of_timestamp:
+        return engine.commit_at_timestamp(parse_timestamp(as_of_timestamp), branch_name)
+    if ref:
+        return engine.resolve_ref(ref)
+    return engine._head(branch_name)
+
+
+@router.post("/sql")
+def execute_sql(req: SQLRequest, engine: VersionEngine = Depends(get_engine)):
+    """Run SQL against a branch. Writes in one request become one commit."""
+    return call(lambda: run_sql(engine, req.sql, branch=req.branch_name, author=req.author,
+                                message=req.message, dry_run=req.dry_run))
+
 
 @router.post("/query")
-async def execute_query(request: QueryRequest, engine: VersionEngine = Depends(get_engine)):
-    try:
-        # Parse table_name from simple queries like "SELECT * FROM users"
-        table_name = request.query.split("FROM ")[1].strip().strip(';') if "FROM " in request.query.upper() else ""
-        if request.as_of_commit:
-            result = engine.query_as_of_commit(
-                table_name=table_name,
-                commit_hash=request.as_of_commit
-            )
-            return {"result": result}
-        elif request.as_of_timestamp:
-            result = engine.query_as_of_timestamp(
-                table_name=table_name,
-                timestamp=float(request.as_of_timestamp)
-            )
-            return {"result": result}
-        else:
-            raise HTTPException(status_code=400, detail="Must provide as_of_commit or as_of_timestamp")
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except sqlite3.Error as e:
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def execute_query(request: QueryRequest, engine: VersionEngine = Depends(get_engine)):
+    """Legacy time-travel endpoint: SELECT * FROM <table> with as_of_commit / as_of_timestamp."""
+    upper = request.query.upper()
+    table_name = request.query[upper.index("FROM ") + 5:].strip().strip(";").split()[0] if "FROM " in upper else ""
+    if request.as_of_commit:
+        return {"result": call(lambda: engine.query_as_of_commit(table_name, request.as_of_commit))}
+    if request.as_of_timestamp:
+        return {"result": call(lambda: engine.query_as_of_timestamp(
+            table_name, parse_timestamp(request.as_of_timestamp), request.branch_name or "main"))}
+    raise HTTPException(status_code=400, detail="Must provide as_of_commit or as_of_timestamp")
+
 
 @router.get("/tables/{name}")
-async def get_table_data(name: str, as_of: str = Query(..., description="Commit hash"), branch_name: str = "main", engine: VersionEngine = Depends(get_engine)):
-    try:
-        result = engine.query_as_of_commit(
-            table_name=name,
-            commit_hash=as_of
-        )
-        return {"result": result}
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except sqlite3.Error as e:
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def get_table_data(name: str, as_of: str = Query(..., description="Commit hash"),
+                   engine: VersionEngine = Depends(get_engine)):
+    return {"result": call(lambda: engine.query_as_of_commit(table_name=name, commit_hash=as_of))}
 
-
-# ── New endpoints for the frontend dashboard ──
 
 @router.get("/tables")
-async def list_tables(branch_name: str = Query("main", description="Branch to list tables for"), engine: VersionEngine = Depends(get_engine)):
-    """List all table names that have data on the given branch."""
-    try:
-        tables = engine.get_tables(branch_name=branch_name)
+def list_tables(branch_name: str = Query("main"), as_of_commit: Optional[str] = None,
+                ref: Optional[str] = None, with_counts: bool = False,
+                engine: VersionEngine = Depends(get_engine)):
+    def run():
+        cid = _commit_for(engine, branch_name, as_of_commit, None, ref)
+        tables = engine.tables_at(cid)
+        if with_counts:
+            return {"tables": tables,
+                    "counts": {t: len(engine.read_table_at(t, cid)) for t in tables}}
         return {"tables": tables}
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return call(run)
+
+
+@router.get("/schema/{table_name}")
+def table_schema(table_name: str, branch_name: str = "main", ref: Optional[str] = None,
+                 engine: VersionEngine = Depends(get_engine)):
+    return call(lambda: engine.table_schema(table_name, _commit_for(engine, branch_name, None, None, ref)))
+
 
 @router.get("/data/{table_name}")
-async def get_data(table_name: str, branch_name: str = Query("main", description="Branch to read from"), engine: VersionEngine = Depends(get_engine)):
-    """Get current data for a table on the specified branch."""
-    try:
-        rows = engine.get_data(branch_name=branch_name, table_name=table_name)
-        return {"rows": rows}
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def get_data(table_name: str, branch_name: str = Query("main"),
+             as_of_commit: Optional[str] = None, as_of_timestamp: Optional[str] = None,
+             ref: Optional[str] = None, engine: VersionEngine = Depends(get_engine)):
+    def run():
+        cid = _commit_for(engine, branch_name, as_of_commit, as_of_timestamp, ref)
+        c = engine.catalog.get_commit(cid) or {}
+        return {"rows": engine.read_table_at(table_name, cid),
+                "commit": {"hash": c.get("hash"), "message": c.get("message"), "timestamp": c.get("timestamp")}}
+    return call(run)
+
+
+@router.get("/rows/{table_name}/{row_id}/history")
+def row_history(table_name: str, row_id: str, ref: str = "main", engine: VersionEngine = Depends(get_engine)):
+    return {"history": call(lambda: engine.row_history(table_name, row_id, ref))}

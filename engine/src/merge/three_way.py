@@ -109,70 +109,88 @@ class ThreeWayMerge:
         source_branch: str,
         target_branch: str,
         author: str,
-        resolutions: Optional[Dict[str, Dict[str, Any]]] = None,
+        resolutions: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        dry_run: bool = False,
     ) -> Dict[str, Any]:
         """
-        Perform a three-way merge of source_branch into target_branch.
+        Three-way merge of source_branch into target_branch.
 
-        Returns:
-          - On success: {"merged": True, "commit": <commit_dict>}
-          - On conflict: {"merged": False, "conflicting_rows": [...]}
+        Nothing is written here; the caller turns the returned change list into
+        a merge commit (or moves the branch pointer for a fast-forward).
 
-        Raises:
-          ValueError: If either branch doesn't exist or no LCA is found.
+        Returns one of
+          {"merged": True, "strategy": "up-to-date" | "fast-forward" | "three-way", ...}
+          {"merged": False, "conflicting_rows": [...]}
+        Raises ValueError if a branch does not exist or there is no common ancestor.
         """
-        # Validate branches
         source = self.catalog.get_branch(source_branch)
         if source is None:
             raise ValueError(f"Source branch '{source_branch}' does not exist")
-
         target = self.catalog.get_branch(target_branch)
         if target is None:
             raise ValueError(f"Target branch '{target_branch}' does not exist")
 
         source_head = source["head_commit_id"]
         target_head = target["head_commit_id"]
+        base = {"source_head": source_head, "target_head": target_head, "author": author,
+                "message": f"Merge branch '{source_branch}' into '{target_branch}'",
+                "dry_run": dry_run}
 
-        # Fast-forward: if target HEAD is an ancestor of source HEAD,
-        # we can just move the target pointer forward
+        # Source already contained in target: nothing to do
+        if self.catalog.is_ancestor(source_head, target_head):
+            return {**base, "merged": True, "strategy": "up-to-date", "changes": [],
+                    "lca": source_head, "conflicting_rows": []}
+
+        # Target is behind source: move the pointer
         if self.catalog.is_ancestor(target_head, source_head):
-            # Fast-forward: target is behind source — just move the pointer
-            self.catalog.update_branch_head(target_branch, source_head)
-            commit = self.catalog.get_commit(source_head)
-            return {"merged": True, "commit": commit, "strategy": "fast-forward"}
+            diffs = self._compute_diffs(target_head, source_head)
+            return {**base, "merged": True, "strategy": "fast-forward", "lca": target_head,
+                    "changes": [self._diff_to_change(d) for d in diffs.values()],
+                    "rows_changed_on_target": len(diffs),
+                    "conflicting_rows": []}
 
-        # Find LCA
         lca_id = self.catalog.find_lca(source_head, target_head)
         if lca_id is None:
             raise ValueError(
                 f"No common ancestor found between '{source_branch}' and '{target_branch}'"
             )
 
-        # Compute diffs
         source_diffs = self._compute_diffs(lca_id, source_head)
         target_diffs = self._compute_diffs(lca_id, target_head)
-
-        # Detect conflicts and build merged changes
+        self.auto_merged_rows: List[Dict[str, Any]] = []
         conflicts, merged_changes = self._reconcile(
             source_diffs, target_diffs, lca_id, source_head, target_head, resolutions
         )
 
-        if conflicts:
-            return {
-                "merged": False,
-                "conflicting_rows": [c.to_dict() for c in conflicts],
-            }
+        # Keep only changes whose value differs from what the merge commit
+        # would otherwise see (the newest version visible from either parent).
+        # Also count the rows whose value on the target branch will change.
+        union = self.catalog.ancestors(source_head) | self.catalog.ancestors(target_head)
+        tanc = self.catalog.ancestors(target_head)
+        needed = []
+        rows_changed_on_target = 0
+        for ch in merged_changes:
+            key = f"{ch['table_name']}:{ch['row_id']}"
+            desired = None if ch["action"] == "delete" else ch["data"]
+            pid = self.btree.resolve_version(key, target_head, lambda a, _t: a in union)
+            visible = read_row_data(self.pool, pid) if pid not in (None, INVALID_PAGE_ID) else None
+            if visible != desired:
+                needed.append(ch)
+            tp = self.btree.resolve_version(key, target_head, lambda a, _t: a in tanc)
+            on_target = read_row_data(self.pool, tp) if tp not in (None, INVALID_PAGE_ID) else None
+            if on_target != desired:
+                rows_changed_on_target += 1
+        merged_changes = needed
 
-        # No conflicts — create the merge commit
-        # The merge commit is applied to target_branch with second_parent = source_head
-        return {
-            "merged": True,
-            "changes": merged_changes,
-            "source_head": source_head,
-            "target_head": target_head,
-            "author": author,
-            "message": f"Merge branch '{source_branch}' into '{target_branch}'",
-        }
+        result = {**base, "lca": lca_id, "strategy": "three-way",
+                  "changes": merged_changes,
+                  "auto_merged_rows": self.auto_merged_rows,
+                  "rows_changed_on_target": rows_changed_on_target,
+                  "source_changed_rows": len(source_diffs),
+                  "target_changed_rows": len(target_diffs),
+                  "conflicting_rows": [c.to_dict() for c in conflicts]}
+        result["merged"] = not conflicts
+        return result
 
     # ────────────────────────────────────────────────
     # Diff computation
@@ -188,11 +206,18 @@ class ThreeWayMerge:
         Only rows that changed are included.
         """
         diffs: Dict[Tuple[str, str], RowDiff] = {}
+        anc_a = self.catalog.ancestors(ancestor_commit_id)
+        anc_b = self.catalog.ancestors(branch_commit_id)
 
         for table_name, row_ids in self.catalog.tables.items():
             for row_id in row_ids:
-                ancestor_data = self._resolve_row_data(table_name, row_id, ancestor_commit_id)
-                branch_data = self._resolve_row_data(table_name, row_id, branch_commit_id)
+                key = f"{table_name}:{row_id}"
+                pa = self.btree.resolve_version(key, ancestor_commit_id, lambda a, _t: a in anc_a)
+                pb = self.btree.resolve_version(key, branch_commit_id, lambda a, _t: a in anc_b)
+                if pa == pb:
+                    continue
+                ancestor_data = read_row_data(self.pool, pa) if pa not in (None, INVALID_PAGE_ID) else None
+                branch_data = read_row_data(self.pool, pb) if pb not in (None, INVALID_PAGE_ID) else None
 
                 # Skip rows that haven't changed
                 if ancestor_data == branch_data:
@@ -257,13 +282,13 @@ class ThreeWayMerge:
                 merged_changes.append(self._diff_to_change(s_diff))
 
             elif t_diff and not s_diff:
-                # Only target changed this row — take target's version
-                # (These changes are already on the target branch, but we
-                # need them in the merge commit to maintain the version chain.)
-                # Actually, since these are already on target, we don't need
-                # to re-apply them. The merge commit only needs source changes
-                # that target doesn't have.
-                pass  # target changes are already on the target branch
+                # Only target changed this row. Its value is already on the
+                # target branch, but it is emitted here too: the source side may
+                # hold a *newer* intermediate version of the row (for example
+                # one created and deleted again), which would otherwise be the
+                # newest version visible from the merge commit. merge() drops
+                # the change again when it is not needed.
+                merged_changes.append(self._diff_to_change(t_diff))
 
             else:
                 # Both branches changed the same row
@@ -271,13 +296,12 @@ class ThreeWayMerge:
 
                 # Check if both made identical changes
                 if s_diff.branch_data == t_diff.branch_data:
-                    # Identical change — no conflict, no need to re-apply
-                    # (target already has it)
-                    pass
+                    # Identical change on both sides — no conflict
+                    merged_changes.append(self._diff_to_change(t_diff))
 
                 elif s_diff.action == "deleted" and t_diff.action == "deleted":
-                    # Both deleted — no conflict (already deleted on target)
-                    pass
+                    # Both deleted — no conflict
+                    merged_changes.append(self._diff_to_change(t_diff))
 
                 elif s_diff.action == "deleted" and t_diff.action in ("modified", "added"):
                     # Source deleted, target modified — CONFLICT
@@ -335,12 +359,17 @@ class ThreeWayMerge:
                             s_diff.branch_data or {},
                             t_diff.branch_data or {},
                         )
+                        # Always write the merged row: both sides now hold a
+                        # version newer than the LCA, and the merge commit must
+                        # carry the newest one or the source's could win.
                         merged_changes.append({
                             "action": "update",
                             "table_name": table_name,
                             "row_id": row_id,
                             "data": merged_data,
                         })
+                        self.auto_merged_rows.append({"table_name": table_name, "row_id": row_id,
+                                                      "data": merged_data})
 
         return conflicts, merged_changes
 
@@ -356,13 +385,14 @@ class ThreeWayMerge:
         Attempt cell-level merge. Returns a ConflictEntry if conflicting cells
         are found, or None if auto-merge is possible.
         """
+        missing = object()
         all_keys = set(ancestor.keys()) | set(source.keys()) | set(target.keys())
         conflicting_cells = []
 
         for cell_key in all_keys:
-            ancestor_val = ancestor.get(cell_key)
-            source_val = source.get(cell_key)
-            target_val = target.get(cell_key)
+            ancestor_val = ancestor.get(cell_key, missing)
+            source_val = source.get(cell_key, missing)
+            target_val = target.get(cell_key, missing)
 
             source_changed = (source_val != ancestor_val)
             target_changed = (target_val != ancestor_val)
@@ -398,30 +428,29 @@ class ThreeWayMerge:
           - If neither changed it → keep ancestor's value
           - If both changed to the same value → take that value
         """
-        all_keys = set(ancestor.keys()) | set(source.keys()) | set(target.keys())
+        missing = object()  # distinguishes "column absent" from a stored null
+        all_keys = list(dict.fromkeys(list(target.keys()) + list(source.keys()) + list(ancestor.keys())))
         merged = {}
 
         for cell_key in all_keys:
-            ancestor_val = ancestor.get(cell_key)
-            source_val = source.get(cell_key)
-            target_val = target.get(cell_key)
+            ancestor_val = ancestor.get(cell_key, missing)
+            source_val = source.get(cell_key, missing)
+            target_val = target.get(cell_key, missing)
 
             source_changed = (source_val != ancestor_val)
             target_changed = (target_val != ancestor_val)
 
             if source_changed and not target_changed:
-                merged[cell_key] = source_val
+                value = source_val
             elif target_changed and not source_changed:
-                merged[cell_key] = target_val
+                value = target_val
             elif source_changed and target_changed:
-                # Both changed to the same value (conflicts caught earlier)
-                merged[cell_key] = source_val
+                value = source_val  # both changed identically (conflicts caught earlier)
             else:
-                # Neither changed
-                merged[cell_key] = ancestor_val
-
-        # Remove keys whose value is None (deleted cells)
-        return {k: v for k, v in merged.items() if v is not None}
+                value = ancestor_val
+            if value is not missing:
+                merged[cell_key] = value
+        return merged
 
     # ────────────────────────────────────────────────
     # Helpers

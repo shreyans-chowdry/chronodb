@@ -1,198 +1,136 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import Link from "next/link";
-import { useBranches, useCommits } from "@/hooks/useChronoDB";
+import { useEffect, useState } from "react";
+import { AppProvider, useApp, View, VIEWS } from "@/lib/store";
+import { api } from "@/lib/api";
+import BranchMenu from "@/components/BranchMenu";
+import Timeline from "@/components/Timeline";
+import { Toasts } from "@/components/ui";
+import {
+  IconClock, IconGraph, IconMerge, IconStorage, IconTable, IconTerminal, LogoMark,
+} from "@/components/icons";
+import DataView from "@/views/DataView";
+import SqlView from "@/views/SqlView";
+import HistoryView from "@/views/HistoryView";
+import GraphView from "@/views/GraphView";
+import CompareView from "@/views/CompareView";
+import StorageView from "@/views/StorageView";
 
-import BranchSwitcher from "@/components/BranchSwitcher";
-import TableViewer from "@/components/TableViewer";
-import SQLEditor from "@/components/SQLEditor";
-import CommitPanel from "@/components/CommitPanel";
-import CommitHistory from "@/components/CommitHistory";
+const ICONS: Record<View, (p: { width?: number; height?: number }) => React.ReactNode> = {
+  data: IconTable,
+  sql: IconTerminal,
+  history: IconClock,
+  graph: IconGraph,
+  compare: IconMerge,
+  storage: IconStorage,
+};
 
-import ErrorState from "@/components/ErrorState";
+const TITLES: Record<View, { title: string; sub: string }> = {
+  data: { title: "Data", sub: "Edit rows directly. Changes are staged and saved together as one commit on the current branch." },
+  sql: { title: "SQL console", sub: "SELECT, INSERT, UPDATE and DELETE with AS OF COMMIT, BRANCH, TAG or TIMESTAMP for reading the past." },
+  history: { title: "History", sub: "Every commit reachable from this branch. Inspect what changed, roll back, revert a single commit, or tag a release." },
+  graph: { title: "Graph", sub: "How branches split off and merge back. Select a commit to open it in History." },
+  compare: { title: "Compare and merge", sub: "See how two branches differ, then merge with a three-way merge. Conflicting rows are resolved here." },
+  storage: { title: "Storage", sub: "How history is stored, plus maintenance: delta compression, garbage collection, branches and tags." },
+};
 
-export default function DashboardPage() {
-  const [activeBranch, setActiveBranch] = useState("main");
-  const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [activeTab, setActiveTab] = useState<"data" | "sql">("data");
+function Shell() {
+  const { view, setView, asOf, apiDown, refresh, author, setAuthor, branch } = useApp();
+  const Current = { data: DataView, sql: SqlView, history: HistoryView, graph: GraphView, compare: CompareView, storage: StorageView }[view];
 
-  const {
-    data: branches,
-    loading: branchesLoading,
-    error: branchesError,
-    refetch: refetchBranches,
-  } = useBranches();
-
-  const {
-    data: commits,
-    loading: commitsLoading,
-    error: commitsError,
-    refetch: refetchCommits,
-  } = useCommits(activeBranch);
-
-  const triggerRefresh = useCallback(() => {
-    setRefreshKey((k) => k + 1);
-    refetchCommits();
-    refetchBranches();
-  }, [refetchCommits, refetchBranches]);
-
-  const handleBranchChange = useCallback(
-    (name: string) => {
-      setActiveBranch(name);
-      setSelectedTable(null);
-    },
-    []
-  );
+  // Keyboard: 1–6 switch views when not typing
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
+      const i = Number(e.key) - 1;
+      if (i >= 0 && i < VIEWS.length) setView(VIEWS[i].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setView]);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      {/* ── Top bar ── */}
-      <header className="sticky top-0 z-30 border-b border-zinc-200/60 dark:border-zinc-800/60 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4 sm:px-6">
-          {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/20">
-              <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                ChronoDB
-              </h1>
-              <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
-                Version-Controlled Database
-              </p>
-            </div>
-          </div>
-
-          {/* Center: branch switcher */}
-          <div className="flex items-center gap-3">
-            {branchesError ? (
-              <ErrorState
-                message="Failed to load branches"
-                onRetry={refetchBranches}
-              />
-            ) : branchesLoading || !branches ? (
-              <div className="h-8 w-32 animate-pulse rounded-lg bg-zinc-50/50 dark:bg-zinc-800/50" />
-            ) : (
-              <BranchSwitcher
-                branches={branches}
-                activeBranch={activeBranch}
-                onBranchChange={handleBranchChange}
-                onRefresh={triggerRefresh}
-              />
-            )}
-          </div>
-
-          {/* Right: nav (Diff & Merge + Branch Graph links) */}
-          <div className="flex items-center gap-2">
-            <Link
-              href="/graph"
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-200/50 dark:border-zinc-700/40 bg-zinc-50/50 dark:bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Z" />
-              </svg>
-              Branch Graph
-            </Link>
-            <Link
-              href="/diff"
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-200/50 dark:border-zinc-700/40 bg-zinc-50/50 dark:bg-zinc-800/50 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:hover:text-violet-300"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-              </svg>
-              Diff & Merge
-            </Link>
+    <div className="shell">
+      <nav className="rail" aria-label="Main">
+        <div className="brand">
+          <LogoMark className="brand-mark" />
+          <div>
+            <div className="brand-name">ChronoDB</div>
+            <div className="brand-sub">version-controlled database</div>
           </div>
         </div>
-      </header>
-
-      {/* ── Main content ── */}
-      <main className="mx-auto flex w-full max-w-[1600px] flex-1 gap-4 p-4 sm:p-6">
-        {/* Left panel: commit history */}
-        <aside className="hidden w-80 flex-shrink-0 lg:block animate-fade-in">
-          <div className="sticky top-20 flex h-[calc(100vh-6rem)] flex-col gap-4">
-            <CommitHistory
-              commits={commits || []}
-              loading={commitsLoading}
-              error={commitsError}
-              branchName={activeBranch}
-              onRollback={triggerRefresh}
-              onRetry={refetchCommits}
-            />
-          </div>
-        </aside>
-
-        {/* Right panel: table viewer + commit form */}
-        <div className="flex min-w-0 flex-1 flex-col gap-4 animate-slide-up">
-          {/* Tabs */}
-          <div className="flex items-center gap-2 border-b border-zinc-200/60 pb-2">
-            <button
-              onClick={() => setActiveTab("data")}
-              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
-                activeTab === "data"
-                  ? "bg-violet-100 text-violet-800"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-              }`}
-            >
-              Data Viewer
-            </button>
-            <button
-              onClick={() => setActiveTab("sql")}
-              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
-                activeTab === "sql"
-                  ? "bg-violet-100 text-violet-800"
-                  : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-              }`}
-            >
-              SQL Runner
-            </button>
-          </div>
-
-          {/* Table viewer or SQL Runner */}
-          <div className="min-h-[300px] flex-1" key={`view-${activeBranch}-${refreshKey}`}>
-            {activeTab === "data" ? (
-              <TableViewer
-                branchName={activeBranch}
-                selectedTable={selectedTable}
-                onSelectTable={setSelectedTable}
-              />
-            ) : (
-              <SQLEditor
-                branchName={activeBranch}
-                onSuccess={triggerRefresh}
-              />
-            )}
-          </div>
-
-          {/* Commit panel */}
-          <CommitPanel
-            branchName={activeBranch}
-            onCommitCreated={triggerRefresh}
-          />
-
-          {/* Mobile: commit history below */}
-          <div className="lg:hidden" key={`history-mobile-${activeBranch}-${refreshKey}`}>
-            <CommitHistory
-              commits={commits || []}
-              loading={commitsLoading}
-              error={commitsError}
-              branchName={activeBranch}
-              onRollback={triggerRefresh}
-              onRetry={refetchCommits}
-            />
-          </div>
+        <div className="nav">
+          {VIEWS.map((v, i) => {
+            const Icon = ICONS[v.id];
+            return (
+              <button key={v.id} className="nav-item" aria-current={view === v.id ? "page" : undefined} onClick={() => setView(v.id)} title={`${v.hint} (${i + 1})`}>
+                <Icon />
+                <span style={{ flex: 1 }}>{v.label}</span>
+                <kbd className="rail-tables" aria-hidden>{i + 1}</kbd>
+              </button>
+            );
+          })}
         </div>
-      </main>
+        <div className="rail-foot">
+          <label className="field">
+            <span>Committing as</span>
+            <input className="input" value={author} onChange={(e) => setAuthor(e.target.value)} aria-label="Author name for commits" />
+          </label>
+          <p style={{ marginTop: 12 }}>
+            <a href="/api/docs" target="_blank" rel="noreferrer" style={{ color: "var(--ink-2)", textDecoration: "underline" }}>API reference</a>
+          </p>
+        </div>
+      </nav>
 
-      {/* Footer */}
-      <footer className="border-t border-zinc-200/40 dark:border-zinc-800/40 py-3 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
-        ChronoDB · Version-Controlled Database Engine · Built with Next.js + FastAPI
-      </footer>
+      <div className="main" data-past={asOf ? "true" : "false"}>
+        <header className="topbar">
+          <BranchMenu />
+          <Timeline />
+        </header>
+        <main className="content">
+          {apiDown ? (
+            <ApiDown message={apiDown} onRetry={refresh} />
+          ) : (
+            <>
+              <div style={{ marginBottom: 18 }}>
+                <h1 className="page-title">{TITLES[view].title}</h1>
+                <p className="page-sub">{TITLES[view].sub}</p>
+              </div>
+              {/* Remount per branch so staged edits and selections never leak across branches */}
+              <Current key={branch} />
+            </>
+          )}
+        </main>
+      </div>
+      <Toasts />
     </div>
+  );
+}
+
+function ApiDown({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const [checking, setChecking] = useState(false);
+  return (
+    <div className="panel" style={{ padding: 24, maxWidth: 640 }}>
+      <h1 className="page-title">The API isn&apos;t responding</h1>
+      <p className="page-sub">{message}</p>
+      <pre className="code" style={{ background: "var(--panel-2)", padding: 12, borderRadius: 8, marginTop: 14, overflowX: "auto" }}>
+{`# from the repository root
+python3 scripts/seed_demo.py          # optional: sample data
+python3 -m uvicorn api.main:app --port 8000`}
+      </pre>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={checking}
+        onClick={async () => { setChecking(true); await api.stats().catch(() => null); setChecking(false); onRetry(); }}>
+        Check again
+      </button>
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <AppProvider>
+      <Shell />
+    </AppProvider>
   );
 }

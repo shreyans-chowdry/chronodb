@@ -33,8 +33,14 @@ from engine.src.version.engine import VersionEngine
 
 DB_PATH = "api_test.db"
 
-def seed():
-    print(f"📦 Seeding interview-ready showcase dataset into '{DB_PATH}'...")
+def seed(db_path: str = DB_PATH, quiet: bool = False):
+    DB_PATH = db_path
+
+    def log(msg: str) -> None:
+        if not quiet:
+            print(msg)
+
+    log(f"📦 Seeding interview-ready showcase dataset into '{DB_PATH}'...")
 
     # Clean previous demo DB if present to start completely fresh
     for ext in ["", ".wal", ".lock"]:
@@ -52,7 +58,7 @@ def seed():
     # ══════════════════════════════════════════════════════════════
 
     # ── Commit 1: Enterprise Users ──
-    print("  [main] Commit 1: Seeding enterprise staff directory...")
+    log("  [main] Commit 1: Seeding enterprise staff directory...")
     engine.commit(
         branch_name="main",
         message="feat: initialize enterprise schema & seed corporate directory",
@@ -112,7 +118,7 @@ def seed():
     )
 
     # ── Commit 2: Enterprise Products Catalog ──
-    print("  [main] Commit 2: Seeding hardware & peripherals catalog...")
+    log("  [main] Commit 2: Seeding hardware & peripherals catalog...")
     engine.commit(
         branch_name="main",
         message="feat: catalog enterprise hardware & peripherals inventory",
@@ -177,7 +183,7 @@ def seed():
     )
 
     # ── Commit 3: Enterprise Orders Ledger ──
-    print("  [main] Commit 3: Seeding initial enterprise purchase ledger...")
+    log("  [main] Commit 3: Seeding initial enterprise purchase ledger...")
     engine.commit(
         branch_name="main",
         message="feat: record initial enterprise purchase transactions",
@@ -222,11 +228,11 @@ def seed():
     # ══════════════════════════════════════════════════════════════
     # 2. DEVELOP BRANCH — STAGING ENVIRONMENT
     # ══════════════════════════════════════════════════════════════
-    print("  [develop] Creating staging branch from main...")
+    log("  [develop] Creating staging branch from main...")
     engine.branch("develop", source_branch="main", pull_from_main=True)
 
     # Commit on develop: Restock and add product
-    print("  [develop] Commit: Restocking monitors, discounting servers & adding Studio Display...")
+    log("  [develop] Commit: Restocking monitors, discounting servers & adding Studio Display...")
     engine.commit(
         branch_name="develop",
         message="feat: restock peripherals & adjust enterprise server pricing",
@@ -269,7 +275,7 @@ def seed():
     )
 
     # Another commit on develop: New staff member
-    print("  [develop] Commit: Onboarding SecOps engineer...")
+    log("  [develop] Commit: Onboarding SecOps engineer...")
     engine.commit(
         branch_name="develop",
         message="feat: onboard senior security operations lead Frank Miller",
@@ -291,10 +297,10 @@ def seed():
     # ══════════════════════════════════════════════════════════════
     # 3. FEATURE/DISCOUNTS-PROMO — READY FOR LIVE DIFF & MERGE DEMO
     # ══════════════════════════════════════════════════════════════
-    print("  [feature/discounts-promo] Creating promo campaign branch from main...")
+    log("  [feature/discounts-promo] Creating promo campaign branch from main...")
     engine.branch("feature/discounts-promo", source_branch="main", pull_from_main=True)
 
-    print("  [feature/discounts-promo] Commit: Applying promotional pricing...")
+    log("  [feature/discounts-promo] Commit: Applying promotional pricing...")
     engine.commit(
         branch_name="feature/discounts-promo",
         message="feat: apply Q4 enterprise hardware promotional discounts (-15%)",
@@ -339,10 +345,10 @@ def seed():
     # ══════════════════════════════════════════════════════════════
     # 4. FEATURE/AUDIT-COMPLIANCE — COMPLIANCE TRACKING & DAG TOPOLOGY
     # ══════════════════════════════════════════════════════════════
-    print("  [feature/audit-compliance] Creating compliance branch from develop...")
+    log("  [feature/audit-compliance] Creating compliance branch from develop...")
     engine.branch("feature/audit-compliance", source_branch="develop", pull_from_main=True)
 
-    print("  [feature/audit-compliance] Commit: Flagging high-value transaction for compliance...")
+    log("  [feature/audit-compliance] Commit: Flagging high-value transaction for compliance...")
     engine.commit(
         branch_name="feature/audit-compliance",
         message="feat: audit high-value European cross-border transaction for SOX compliance",
@@ -362,9 +368,35 @@ def seed():
         ]
     )
 
+    # ══════════════════════════════════════════════════════════════
+    # 5. RELEASE TAG, A MERGED HOTFIX AND A CONFLICTING BRANCH
+    # ══════════════════════════════════════════════════════════════
+    log("  [main] Tagging release v1.0...")
+    engine.create_tag("v1.0", "main", message="First production release", author="shreyans")
+
+    log("  [hotfix/email-typo] Fixing an email address and merging back into main...")
+    engine.branch("hotfix/email-typo", source_branch="main")
+    bob = engine.get_row("main", "users", "usr_102") or {}
+    bob = {k: v for k, v in bob.items() if k != "row_id"}
+    bob["email"] = "bob.johnson@techcorp.com"
+    engine.commit("hotfix/email-typo", "fix: correct Bob's email domain", "swapnil",
+                  changes=[{"action": "update", "table_name": "users", "row_id": "usr_102", "data": bob}])
+    engine.commit("main", "chore: mark Diana as on leave", "shreyans", changes=[{
+        "action": "update", "table_name": "users", "row_id": "usr_104",
+        "data": {**{k: v for k, v in (engine.get_row("main", "users", "usr_104") or {}).items() if k != "row_id"},
+                 "status": "On Leave"}}])
+    engine.merge("hotfix/email-typo", "main", "shreyans")
+
+    log("  [feature/price-war] Conflicting price change for the merge-conflict demo...")
+    engine.branch("feature/price-war", source_branch="main")
+    mbp = {k: v for k, v in (engine.get_row("main", "products", "prod_1") or {}).items() if k != "row_id"}
+    mbp.update({"unit_price": "2799.00", "status": "Price Match"})
+    engine.commit("feature/price-war", "feat: match competitor price on MacBook Pro", "swapnil",
+                  changes=[{"action": "update", "table_name": "products", "row_id": "prod_1", "data": mbp}])
+
     # Close engine cleanly
     engine.close()
-    print("✅ Interview showcase database successfully generated in 'api_test.db'!")
+    log(f"✅ Showcase database generated in '{DB_PATH}'")
 
 if __name__ == "__main__":
     seed()

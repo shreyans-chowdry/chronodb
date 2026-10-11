@@ -1,268 +1,444 @@
 """
 ChronoDB Storage Engine — System Catalog
 
-Manages database metadata (branches and commit DAG) using the Buffer Pool.
-To handle metadata larger than a single 4KB page, it implements a simple
-linked-list of overflow pages.
+Persists database metadata in the page store.
+
+Layout (format version 2)
+-------------------------
+* Header (page chain starting at the catalog root, normally page 0): a small
+  JSON document holding branches, tags, the B+ tree root, the free-page list,
+  the packed-delta heap tail and the heads/tails of two append-only logs.
+* Commit log: an append-only chain of pages, one JSON line per commit.
+* Key log:    an append-only chain of pages, one JSON line per (table, row_id)
+  registration.
+
+Earlier versions rewrote the whole catalog, including every commit, on each
+change, which made every commit O(history). With append-only logs a commit
+appends one line and rewrites only the small header.
+
+Databases written by the original single-document format (version 1) are
+migrated transparently the first time they are opened.
+
+Header and log changes are made in the buffer pool; ``flush()`` writes a
+dirty header. The version engine calls ``flush()`` once per operation and
+then logs the dirty pages to the WAL, so metadata is recovered together with
+row data after a crash.
 """
 
 import json
-from typing import Dict, Any, List, Optional
+from collections import OrderedDict
+from typing import Any, Dict, FrozenSet, List, Optional, Set
 
 from ..storage.buffer_pool import BufferPoolManager
 from ..storage.page import PAGE_SIZE, INVALID_PAGE_ID
 
+_HDR = 8  # next_page_id (4) + used_len (4)
+_ANC_CACHE_SIZE = 64
+
+
+class _PageChain:
+    """Helpers for linked page chains: [next:int32][len:uint32][payload]."""
+
+    def __init__(self, pool: BufferPoolManager):
+        self.pool = pool
+
+    def read(self, head: int) -> bytes:
+        out = bytearray()
+        pid = head
+        seen = set()
+        while pid != INVALID_PAGE_ID and pid not in seen:
+            seen.add(pid)
+            page = self.pool.fetch_page(pid)
+            if not page:
+                break
+            nxt = int.from_bytes(page.data[:4], "big", signed=True)
+            ln = int.from_bytes(page.data[4:8], "big", signed=False)
+            if ln == 0 and nxt == 0:
+                self.pool.unpin_page(pid, is_dirty=False)
+                break
+            out.extend(page.data[_HDR:_HDR + ln])
+            self.pool.unpin_page(pid, is_dirty=False)
+            pid = nxt
+        return bytes(out)
+
+    def pages(self, head: int) -> List[int]:
+        res = []
+        pid = head
+        while pid != INVALID_PAGE_ID and pid not in res:
+            page = self.pool.fetch_page(pid)
+            if not page:
+                break
+            nxt = int.from_bytes(page.data[:4], "big", signed=True)
+            ln = int.from_bytes(page.data[4:8], "big", signed=False)
+            self.pool.unpin_page(pid, is_dirty=False)
+            res.append(pid)
+            if ln == 0 and nxt == 0:
+                break
+            pid = nxt
+        return res
+
+    def write(self, head: int, data: bytes) -> None:
+        """Overwrite a chain starting at head, reusing / extending / freeing pages."""
+        cap = PAGE_SIZE - _HDR
+        existing = self.pages(head)
+        n_needed = max(1, (len(data) + cap - 1) // cap)
+        pids = existing[:n_needed]
+        while len(pids) < n_needed:
+            p = self.pool.new_page()
+            if not p:
+                raise RuntimeError("Out of memory extending catalog chain")
+            pids.append(p.page_id)
+            self.pool.unpin_page(p.page_id, is_dirty=True)
+        for i, pid in enumerate(pids):
+            chunk = data[i * cap:(i + 1) * cap]
+            nxt = pids[i + 1] if i + 1 < len(pids) else INVALID_PAGE_ID
+            page = self.pool.fetch_page(pid)
+            if not page:
+                raise RuntimeError(f"Failed to fetch catalog page {pid}")
+            page.data[:] = b"\x00" * PAGE_SIZE
+            page.data[:4] = nxt.to_bytes(4, "big", signed=True)
+            page.data[4:8] = len(chunk).to_bytes(4, "big", signed=False)
+            page.data[_HDR:_HDR + len(chunk)] = chunk
+            self.pool.unpin_page(pid, is_dirty=True)
+        for pid in existing[n_needed:]:
+            self.pool.delete_page(pid)
+
+
+class _AppendLog:
+    """Append-only log of JSON lines stored in a page chain."""
+
+    def __init__(self, pool: BufferPoolManager, head: int = INVALID_PAGE_ID, tail: int = INVALID_PAGE_ID):
+        self.pool = pool
+        self.head = head
+        self.tail = tail
+
+    def _new_page(self) -> int:
+        p = self.pool.new_page()
+        if not p:
+            raise RuntimeError("Out of memory extending catalog log")
+        p.data[:4] = INVALID_PAGE_ID.to_bytes(4, "big", signed=True)
+        p.data[4:8] = (0).to_bytes(4, "big")
+        pid = p.page_id
+        self.pool.unpin_page(pid, is_dirty=True)
+        return pid
+
+    def append(self, record: Any) -> None:
+        line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+        cap = PAGE_SIZE - _HDR
+        if len(line) > cap:
+            raise ValueError("Catalog record larger than a page")
+        if self.head == INVALID_PAGE_ID:
+            self.head = self.tail = self._new_page()
+        page = self.pool.fetch_page(self.tail)
+        if not page:
+            raise RuntimeError("Failed to fetch catalog log tail")
+        used = int.from_bytes(page.data[4:8], "big")
+        if used + len(line) > cap:
+            new_pid = self._new_page()
+            page.data[:4] = new_pid.to_bytes(4, "big", signed=True)
+            self.pool.unpin_page(self.tail, is_dirty=True)
+            self.tail = new_pid
+            page = self.pool.fetch_page(self.tail)
+            if not page:
+                raise RuntimeError("Failed to fetch catalog log tail")
+            used = 0
+        page.data[_HDR + used:_HDR + used + len(line)] = line
+        page.data[4:8] = (used + len(line)).to_bytes(4, "big")
+        self.pool.unpin_page(self.tail, is_dirty=True)
+
+    def read_all(self) -> List[Any]:
+        if self.head == INVALID_PAGE_ID:
+            return []
+        raw = _PageChain(self.pool).read(self.head)
+        return [json.loads(l) for l in raw.decode("utf-8").splitlines() if l.strip()]
+
+    def page_ids(self) -> List[int]:
+        if self.head == INVALID_PAGE_ID:
+            return []
+        return _PageChain(self.pool).pages(self.head)
+
+    def rewrite(self, records: List[Any]) -> None:
+        old = self.page_ids()
+        self.head = self.tail = INVALID_PAGE_ID
+        for r in records:
+            self.append(r)
+        for pid in old:
+            self.pool.delete_page(pid)
+
 
 class SystemCatalog:
-    """
-    Stores system metadata (branches, commits, and known tables/keys)
-    in the custom page store starting at a specific root page (usually Page 0).
-    """
+    """Branches, tags, the commit DAG and the table → row-key directory."""
+
+    FORMAT_VERSION = 2
+
     def __init__(self, buffer_pool: BufferPoolManager, root_page_id: int):
         self.pool = buffer_pool
         self.root_page_id = root_page_id
-        
+        self._chain = _PageChain(buffer_pool)
+
         self.branches: Dict[str, Dict[str, Any]] = {}
+        self.tags: Dict[str, Dict[str, Any]] = {}
         self.commits: Dict[int, Dict[str, Any]] = {}
-        
-        # Track active keys per table: table_name -> list of row_ids
-        # Used to enable full table scans over the B+ Tree Index
         self.tables: Dict[str, List[str]] = {}
-        
+        self._table_sets: Dict[str, Set[str]] = {}
+        self._hash_index: Dict[str, int] = {}
+        self.btree_root: int = INVALID_PAGE_ID
+        self.heap_tail: int = INVALID_PAGE_ID
+        self.next_txn_id: int = 1
+        self.extra: Dict[str, Any] = {}
+
+        self.commit_log = _AppendLog(buffer_pool)
+        self.key_log = _AppendLog(buffer_pool)
+        self._dirty = False
+        self._anc_cache: "OrderedDict[int, FrozenSet[int]]" = OrderedDict()
+        self.migrated_from_v1 = False
+
         self.load()
 
-    def load(self) -> None:
-        """Read and deserialize the catalog from the page store."""
-        data_bytes = bytearray()
-        curr_page_id = self.root_page_id
-        
-        while curr_page_id != INVALID_PAGE_ID:
-            page = self.pool.fetch_page(curr_page_id)
-            if not page:
-                break
-                
-            # Read next_page_id (4 bytes)
-            next_page_id = int.from_bytes(page.data[:4], byteorder='big', signed=True)
-            
-            # Read length of chunk (4 bytes)
-            chunk_len = int.from_bytes(page.data[4:8], byteorder='big', signed=False)
-            
-            if chunk_len == 0 and next_page_id == 0:
-                # Page is zero-filled (brand new), stop reading
-                self.pool.unpin_page(curr_page_id, is_dirty=False)
-                break
-                
-            # Read chunk data
-            if chunk_len > 0:
-                data_bytes.extend(page.data[8:8+chunk_len])
-                
-            self.pool.unpin_page(curr_page_id, is_dirty=False)
-            
-            if next_page_id == curr_page_id:
-                break # prevent infinite loops
-                
-            curr_page_id = next_page_id
-            
-        if data_bytes:
-            state = json.loads(data_bytes.decode('utf-8'))
-            self.branches = state.get("branches", {})
-            # JSON keys are always strings, convert commit_ids back to int
-            self.commits = {int(k): v for k, v in state.get("commits", {}).items()}
-            self.tables = state.get("tables", {})
-        else:
-            self.branches = {}
-            self.commits = {}
-            self.tables = {}
+    # ────────────────────────────────────────────────
+    # Persistence
+    # ────────────────────────────────────────────────
 
-    def save(self) -> None:
-        """Serialize and write the catalog to the page store."""
+    def load(self) -> None:
+        raw = self._chain.read(self.root_page_id)
+        if not raw:
+            return
+        state = json.loads(raw.decode("utf-8"))
+
+        if state.get("v") != self.FORMAT_VERSION:
+            self._load_v1(state)
+            return
+
+        self.branches = state.get("branches", {})
+        self.tags = state.get("tags", {})
+        self.btree_root = state.get("btree_root", INVALID_PAGE_ID)
+        self.heap_tail = state.get("heap_tail", INVALID_PAGE_ID)
+        self.next_txn_id = state.get("next_txn_id", 1)
+        self.extra = state.get("extra", {})
+        self.pool.disk_manager.free_pages = list(state.get("free_pages", []))
+        cl, kl = state.get("commit_log", {}), state.get("key_log", {})
+        self.commit_log = _AppendLog(self.pool, cl.get("head", -1), cl.get("tail", -1))
+        self.key_log = _AppendLog(self.pool, kl.get("head", -1), kl.get("tail", -1))
+
+        for c in self.commit_log.read_all():
+            if c.get("_removed"):
+                for cid in c["_removed"]:
+                    self.commits.pop(cid, None)
+                continue
+            self.commits[c["id"]] = c
+        for t, r in self.key_log.read_all():
+            self._add_key_mem(t, r)
+        self._rebuild_hash_index()
+
+    def _load_v1(self, state: Dict[str, Any]) -> None:
+        """Migrate the original single-JSON-document catalog."""
+        self.branches = state.get("branches", {})
+        self.commits = {int(k): v for k, v in state.get("commits", {}).items()}
+        for t, rows in state.get("tables", {}).items():
+            for r in rows:
+                self._add_key_mem(t, r)
+        self.btree_root = 1  # v1 always created the B+ tree root at page 1
+        self.next_txn_id = (max(self.commits) + 1) if self.commits else 1
+        for cid in sorted(self.commits):
+            self.commit_log.append(self.commits[cid])
+        for t, rows in self.tables.items():
+            for r in rows:
+                self.key_log.append([t, r])
+        self._rebuild_hash_index()
+        self.migrated_from_v1 = True
+        self._dirty = True
+        self.flush()
+
+    def flush(self) -> None:
+        """Write the header if anything in it changed."""
+        if not self._dirty:
+            return
         state = {
+            "v": self.FORMAT_VERSION,
             "branches": self.branches,
-            "commits": self.commits,
-            "tables": self.tables
+            "tags": self.tags,
+            "btree_root": self.btree_root,
+            "heap_tail": self.heap_tail,
+            "next_txn_id": self.next_txn_id,
+            "free_pages": sorted(self.pool.disk_manager.free_pages),
+            "commit_log": {"head": self.commit_log.head, "tail": self.commit_log.tail},
+            "key_log": {"head": self.key_log.head, "tail": self.key_log.tail},
+            "extra": self.extra,
         }
-        data_bytes = json.dumps(state).encode('utf-8')
-        
-        # Write in chunks of (PAGE_SIZE - 8) bytes
-        max_chunk = PAGE_SIZE - 8
-        
-        curr_page_id = self.root_page_id
-        offset = 0
-        
-        while offset < len(data_bytes) or offset == 0:
-            chunk = data_bytes[offset:offset+max_chunk]
-            offset += max_chunk
-            
-            page = self.pool.fetch_page(curr_page_id)
-            if not page:
-                raise RuntimeError(f"Failed to fetch catalog page {curr_page_id}")
-                
-            # If there's more data but we don't have a next page, allocate one
-            next_page_id = INVALID_PAGE_ID
-            if offset < len(data_bytes):
-                # Read existing next_page_id first to see if we can reuse it
-                existing_next = int.from_bytes(page.data[:4], byteorder='big', signed=True)
-                if existing_next != INVALID_PAGE_ID:
-                    next_page_id = existing_next
-                else:
-                    new_page = self.pool.new_page()
-                    if not new_page:
-                        raise RuntimeError("Out of memory extending catalog")
-                    next_page_id = new_page.page_id
-                    self.pool.unpin_page(next_page_id, is_dirty=True)
-            
-            # Pack header and chunk
-            page.data[:4] = next_page_id.to_bytes(4, byteorder='big', signed=True)
-            page.data[4:8] = len(chunk).to_bytes(4, byteorder='big', signed=False)
-            page.data[8:8+len(chunk)] = chunk
-            
-            self.pool.unpin_page(curr_page_id, is_dirty=True)
-            curr_page_id = next_page_id
+        self._chain.write(self.root_page_id, json.dumps(state, separators=(",", ":")).encode("utf-8"))
+        self._dirty = False
+
+    def mark_dirty(self) -> None:
+        self._dirty = True
+
+    # Backwards-compatible name used by older callers
+    def save(self) -> None:
+        self._dirty = True
+        self.flush()
 
     # ────────────────────────────────────────────────
-    # Core Operations
+    # Commits
     # ────────────────────────────────────────────────
 
     def add_commit(self, commit_id: int, commit_data: Dict[str, Any]) -> None:
         self.commits[commit_id] = commit_data
-        self.save()
-
-    def add_branch(self, name: str, head_commit_id: int) -> None:
-        self.branches[name] = {"name": name, "head_commit_id": head_commit_id}
-        self.save()
-
-    def update_branch_head(self, name: str, head_commit_id: int) -> None:
-        if name in self.branches:
-            self.branches[name]["head_commit_id"] = head_commit_id
-            self.save()
+        self._hash_index[commit_data["hash"]] = commit_id
+        self.commit_log.append(commit_data)
+        if commit_id >= self.next_txn_id:
+            self.next_txn_id = commit_id + 1
+        self._dirty = True
 
     def get_commit(self, commit_id: int) -> Optional[Dict[str, Any]]:
         return self.commits.get(commit_id)
 
+    def commit_id_for_hash(self, commit_hash: str) -> Optional[int]:
+        cid = self._hash_index.get(commit_hash)
+        if cid is not None:
+            return cid
+        # Allow unambiguous short prefixes, like Git
+        if len(commit_hash) >= 4:
+            matches = [c for h, c in self._hash_index.items() if h.startswith(commit_hash)]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _rebuild_hash_index(self) -> None:
+        self._hash_index = {c["hash"]: cid for cid, c in self.commits.items()}
+
+    def remove_commits(self, commit_ids: set) -> int:
+        removed = [cid for cid in commit_ids if cid in self.commits]
+        for cid in removed:
+            del self.commits[cid]
+        if removed:
+            self._rebuild_hash_index()
+            self._anc_cache.clear()
+            self.commit_log.rewrite([self.commits[c] for c in sorted(self.commits)])
+            self._dirty = True
+        return len(removed)
+
+    # ────────────────────────────────────────────────
+    # Branches & tags
+    # ────────────────────────────────────────────────
+
+    def add_branch(self, name: str, head_commit_id: int, **meta: Any) -> None:
+        self.branches[name] = {"name": name, "head_commit_id": head_commit_id, **meta}
+        self._dirty = True
+
+    def update_branch_head(self, name: str, head_commit_id: int) -> None:
+        if name in self.branches:
+            self.branches[name]["head_commit_id"] = head_commit_id
+            self._dirty = True
+
     def get_branch(self, name: str) -> Optional[Dict[str, Any]]:
         return self.branches.get(name)
 
-    def register_row_key(self, table_name: str, row_id: str) -> None:
-        """Register a known row_id for a table to allow full table scans."""
-        if table_name not in self.tables:
-            self.tables[table_name] = []
-        if row_id not in self.tables[table_name]:
-            self.tables[table_name].append(row_id)
-            self.save()
-
-    def is_ancestor(self, ancestor_id: int, target_id: int) -> bool:
-        """
-        Check if ancestor_id is an ancestor of target_id in the commit DAG.
-        Returns True if ancestor_id == target_id.
-        
-        Uses BFS traversal that follows both parent_id and second_parent_id
-        to correctly handle merge commits.
-        """
-        if ancestor_id == target_id:
-            return True
-
-        # BFS through the DAG
-        visited = set()
-        queue = [target_id]
-
-        while queue:
-            current_id = queue.pop(0)
-            if current_id is None or current_id in visited:
-                continue
-            if current_id == ancestor_id:
-                return True
-            visited.add(current_id)
-
-            commit = self.commits.get(current_id)
-            if not commit:
-                continue
-            parent = commit.get("parent_id")
-            if parent is not None:
-                queue.append(parent)
-            second_parent = commit.get("second_parent_id")
-            if second_parent is not None:
-                queue.append(second_parent)
-
-        return False
-
-    def find_lca(self, commit_id_a: int, commit_id_b: int) -> Optional[int]:
-        """
-        Find the Lowest Common Ancestor of two commits in the commit DAG.
-        
-        Uses a two-pointer BFS approach: expand ancestors of both commits
-        layer by layer, and return the first commit found in both ancestor sets.
-        
-        Returns None if no common ancestor exists (should not happen in a
-        well-formed repo since all branches share the initial commit).
-        """
-        if commit_id_a == commit_id_b:
-            return commit_id_a
-
-        ancestors_a = set()
-        ancestors_b = set()
-        queue_a = [commit_id_a]
-        queue_b = [commit_id_b]
-
-        while queue_a or queue_b:
-            # Expand one layer from A
-            if queue_a:
-                current = queue_a.pop(0)
-                if current is not None and current not in ancestors_a:
-                    if current in ancestors_b:
-                        return current
-                    ancestors_a.add(current)
-                    commit = self.commits.get(current)
-                    if commit:
-                        parent = commit.get("parent_id")
-                        if parent is not None:
-                            queue_a.append(parent)
-                        second_parent = commit.get("second_parent_id")
-                        if second_parent is not None:
-                            queue_a.append(second_parent)
-
-            # Expand one layer from B
-            if queue_b:
-                current = queue_b.pop(0)
-                if current is not None and current not in ancestors_b:
-                    if current in ancestors_a:
-                        return current
-                    ancestors_b.add(current)
-                    commit = self.commits.get(current)
-                    if commit:
-                        parent = commit.get("parent_id")
-                        if parent is not None:
-                            queue_b.append(parent)
-                        second_parent = commit.get("second_parent_id")
-                        if second_parent is not None:
-                            queue_b.append(second_parent)
-
-        return None
-
     def delete_branch(self, name: str) -> bool:
-        """
-        Delete a branch by name. Returns True if deleted, False if not found.
-        Does NOT delete commits — they become orphaned until GC reclaims them.
-        Cannot delete 'main'.
-        """
         if name == "main":
             raise ValueError("Cannot delete the 'main' branch")
         if name not in self.branches:
             return False
         del self.branches[name]
-        self.save()
+        self._dirty = True
         return True
 
-    def remove_commits(self, commit_ids: set) -> int:
-        """
-        Remove a set of commit IDs from the catalog. Used by GC.
-        Returns the number of commits actually removed.
-        """
-        removed = 0
-        for cid in commit_ids:
-            if cid in self.commits:
-                del self.commits[cid]
-                removed += 1
-        if removed > 0:
-            self.save()
-        return removed
+    def add_tag(self, name: str, commit_id: int, **meta: Any) -> None:
+        self.tags[name] = {"name": name, "commit_id": commit_id, **meta}
+        self._dirty = True
 
+    def delete_tag(self, name: str) -> bool:
+        if self.tags.pop(name, None) is None:
+            return False
+        self._dirty = True
+        return True
+
+    # ────────────────────────────────────────────────
+    # Table directory
+    # ────────────────────────────────────────────────
+
+    def _add_key_mem(self, table_name: str, row_id: str) -> bool:
+        s = self._table_sets.setdefault(table_name, set())
+        if row_id in s:
+            return False
+        s.add(row_id)
+        self.tables.setdefault(table_name, []).append(row_id)
+        return True
+
+    def register_row_key(self, table_name: str, row_id: str) -> None:
+        if self._add_key_mem(table_name, row_id):
+            self.key_log.append([table_name, row_id])
+            self._dirty = True
+
+    def has_row_key(self, table_name: str, row_id: str) -> bool:
+        return row_id in self._table_sets.get(table_name, ())
+
+    # ────────────────────────────────────────────────
+    # DAG queries
+    # ────────────────────────────────────────────────
+
+    def ancestors(self, commit_id: int) -> FrozenSet[int]:
+        """All ancestors of commit_id, including itself (cached; commits are immutable)."""
+        cached = self._anc_cache.get(commit_id)
+        if cached is not None:
+            self._anc_cache.move_to_end(commit_id)
+            return cached
+
+        commit = self.commits.get(commit_id)
+        if commit is None:
+            return frozenset()
+        parents = [p for p in (commit.get("parent_id"), commit.get("second_parent_id")) if p is not None]
+        if parents and all(p in self._anc_cache for p in parents):
+            acc: Set[int] = set(self._anc_cache[parents[0]])
+            for p in parents[1:]:
+                acc |= self._anc_cache[p]
+            acc.add(commit_id)
+        else:
+            acc = set()
+            stack = [commit_id]
+            while stack:
+                cid = stack.pop()
+                if cid in acc:
+                    continue
+                if cid in self._anc_cache and cid != commit_id:
+                    acc |= self._anc_cache[cid]
+                    continue
+                acc.add(cid)
+                c = self.commits.get(cid)
+                if c:
+                    for p in (c.get("parent_id"), c.get("second_parent_id")):
+                        if p is not None and p not in acc:
+                            stack.append(p)
+        result = frozenset(acc)
+        self._anc_cache[commit_id] = result
+        if len(self._anc_cache) > _ANC_CACHE_SIZE:
+            self._anc_cache.popitem(last=False)
+        return result
+
+    def is_ancestor(self, ancestor_id: int, target_id: int) -> bool:
+        """True if ancestor_id is target_id or one of its ancestors."""
+        if ancestor_id == target_id:
+            return True
+        return ancestor_id in self.ancestors(target_id)
+
+    def find_lca(self, commit_id_a: int, commit_id_b: int) -> Optional[int]:
+        """
+        Lowest common ancestor: a common ancestor that is not an ancestor of
+        any other common ancestor. If several exist (criss-cross merges), the
+        most recent one (highest commit id) is returned.
+        """
+        if commit_id_a == commit_id_b:
+            return commit_id_a
+        common = self.ancestors(commit_id_a) & self.ancestors(commit_id_b)
+        if not common:
+            return None
+        # A common ancestor that is the parent of another common ancestor is
+        # not "lowest"; the set of ancestors is closed under parents, so this
+        # single pass finds the frontier.
+        has_child: Set[int] = set()
+        for c in common:
+            commit = self.commits.get(c)
+            if commit:
+                for p in (commit.get("parent_id"), commit.get("second_parent_id")):
+                    if p is not None:
+                        has_child.add(p)
+        best = [c for c in common if c not in has_child]
+        return max(best) if best else max(common)

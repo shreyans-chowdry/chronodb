@@ -34,6 +34,10 @@ class DiskManager:
         self.db_file_path = db_file_path
         self._lock = threading.Lock()
         self._next_page_id = 0
+        # Pages released by GC / the storage optimizer. They are handed out again
+        # by allocate_page() before the file is extended. The list itself is
+        # persisted by the SystemCatalog header.
+        self.free_pages: list = []
 
         # Create the file if it doesn't exist; otherwise determine next_page_id
         # from existing file size
@@ -44,6 +48,10 @@ class DiskManager:
             # Create an empty file
             with open(db_file_path, "wb") as f:
                 pass
+
+        # One long-lived handle. Durability comes from the WAL, so individual
+        # page writes are not fsync'd; sync() is called at checkpoints.
+        self._fh = open(db_file_path, "r+b")
 
     def read_page(self, page_id: int) -> bytearray:
         """
@@ -67,9 +75,8 @@ class DiskManager:
             offset = page_id * PAGE_SIZE
             data = bytearray(PAGE_SIZE)
 
-            with open(self.db_file_path, "rb") as f:
-                f.seek(offset)
-                bytes_read = f.readinto(data)
+            self._fh.seek(offset)
+            bytes_read = self._fh.readinto(data)
 
             # Pad with zeros if the file is shorter than expected (shouldn't
             # happen in normal operation, but handle gracefully)
@@ -96,51 +103,67 @@ class DiskManager:
 
         with self._lock:
             offset = page_id * PAGE_SIZE
-
-            with open(self.db_file_path, "r+b") as f:
-                f.seek(offset)
-                f.write(data)
-                f.flush()
-                os.fsync(f.fileno())
+            self._fh.seek(offset)
+            self._fh.write(data)
+            self._fh.flush()  # hand to the OS (no fsync)
 
     def allocate_page(self) -> int:
         """
-        Allocate a new page on disk and return its page_id.
+        Allocate a page and return its page_id.
 
-        The new page is zeroed out on disk.
+        A previously freed page is reused when one is available; otherwise the
+        file is extended by one zeroed page.
 
         Returns:
-            The page_id of the newly allocated page.
+            The page_id of the allocated page.
         """
         with self._lock:
+            if self.free_pages:
+                return self.free_pages.pop()
             page_id = self._next_page_id
             self._next_page_id += 1
 
             # Extend the file with a zeroed page
-            with open(self.db_file_path, "ab") as f:
-                f.write(bytearray(PAGE_SIZE))
-                f.flush()
-                os.fsync(f.fileno())
+            self._fh.seek(page_id * PAGE_SIZE)
+            self._fh.write(bytes(PAGE_SIZE))
+            self._fh.flush()
 
             return page_id
 
     def deallocate_page(self, page_id: int) -> None:
         """
-        Mark a page as deallocated.
-
-        For now, this is a no-op (the space is not reclaimed). A future
-        implementation will maintain a free-page list for reuse.
+        Return a page to the free list so that a later allocation can reuse it.
+        The file is not shrunk; freed pages are recycled in place.
         """
-        # TODO: Implement free-page list for space reclamation
-        pass
+        with self._lock:
+            if 0 <= page_id < self._next_page_id and page_id not in self.free_pages:
+                self.free_pages.append(page_id)
+
+    def get_num_live_pages(self) -> int:
+        """Pages that are allocated and not on the free list."""
+        return self._next_page_id - len(self.free_pages)
 
     def get_num_pages(self) -> int:
         """Return the total number of pages allocated on disk."""
         return self._next_page_id
 
+    def sync(self) -> None:
+        """Force all written pages to stable storage."""
+        with self._lock:
+            if self._fh and not self._fh.closed:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+
+    def get_file_size(self) -> int:
+        return self._next_page_id * PAGE_SIZE
+
     def close(self) -> None:
-        """Close the disk manager. No-op for file-based I/O."""
-        pass
+        """Flush and close the file handle."""
+        with self._lock:
+            if self._fh and not self._fh.closed:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+                self._fh.close()
 
     def __repr__(self) -> str:
         return (

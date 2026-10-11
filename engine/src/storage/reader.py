@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 from .buffer_pool import BufferPoolManager
 from .page import PAGE_SIZE, INVALID_PAGE_ID
 from .delta import is_delta_page, decode_delta_page, apply_delta
+from .heap import is_packed_ref, read_packed
 
 
 def read_row_data(
@@ -34,6 +35,19 @@ def read_row_data(
     """
     if page_version_id is None or page_version_id == INVALID_PAGE_ID:
         return None
+
+    if is_packed_ref(page_version_id):
+        # Delta record packed into a shared heap page
+        rec = read_packed(pool, page_version_id)
+        if rec is None:
+            return None
+        if max_depth <= 0:
+            raise RuntimeError("Maximum delta chain depth exceeded")
+        base_page_id, delta = rec
+        base_data = read_row_data(pool, base_page_id, max_depth=max_depth - 1)
+        if base_data is None:
+            return None
+        return apply_delta(base_data, delta)
 
     page = pool.fetch_page(page_version_id)
     if not page:
